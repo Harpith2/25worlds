@@ -359,7 +359,7 @@ def ground_instances(
             ).tolist(),
             "sample_xyz": sample_points(
                 points,
-                1000,
+                5000,
             ),
         }
 

@@ -1,0 +1,187 @@
+/* Scope these refinements to Spatial Intelligence; reconstruction keeps its layout. */
+.workspace {
+  --spatial-stage-height: clamp(440px, 62vh, 680px);
+}
+
+.workspace :global(.workspace-grid) {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+}
+
+.workspace :global(.spatial-control-card),
+.workspace :global(.spatial-viewer-card) {
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.workspace :global(.spatial-content) {
+  padding: 24px;
+  gap: 22px;
+}
+
+.workspace :global(.spatial-description) {
+  max-width: 900px;
+  color: #505050;
+  font-size: 12px;
+}
+
+.workspace :global(.spatial-fields) {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(150px, .7fr) minmax(200px, 1fr);
+  align-items: start;
+  gap: 24px;
+}
+
+.workspace :global(.spatial-query-field),
+.workspace :global(.spatial-frame-field) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workspace :global(.spatial-fields label) {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.workspace :global(.spatial-suggestions) { margin: 0; }
+
+.workspace :global(.spatial-action) {
+  margin-top: 24px;
+  min-height: 47px;
+  height: auto;
+  padding-block: 13px;
+  font-size: 12px;
+}
+
+.workspace :global(.spatial-results) {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px 24px;
+  padding-top: 22px;
+}
+
+.workspace :global(.spatial-result-heading),
+.workspace :global(.spatial-results > .spatial-caption),
+.workspace :global(.spatial-object-list) {
+  grid-column: 1 / -1;
+}
+
+.workspace :global(.spatial-object-list) {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 10px;
+  max-height: 180px;
+}
+
+.workspace :global(.spatial-object) {
+  padding: 14px 16px;
+  min-height: 66px;
+}
+
+.workspace :global(.spatial-stat-row) {
+  align-items: flex-start;
+  flex-direction: column;
+  padding-top: 14px;
+  gap: 8px;
+  border-color: #d3d0d8;
+  line-height: 1.5;
+}
+
+.workspace :global(.spatial-stat-row > span) { color: #57525c; }
+.workspace :global(.spatial-stat-row strong) { text-align: left; font-size: 11px; }
+
+/* Give the interactive 3D scene most of the full-width viewer. */
+.workspace :global(.spatial-visual-grid) {
+  grid-template-columns: minmax(0, .9fr) minmax(0, 2fr);
+  min-height: 0;
+}
+
+.workspace :global(.spatial-frame-panel) {
+  border-right: 1px solid #383838;
+  border-bottom: 0;
+}
+
+.workspace :global(.spatial-visual-label) {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  border-color: #383838;
+  letter-spacing: 1px;
+  color: #d3d0d8;
+}
+
+.workspace :global(.spatial-frame-stage) {
+  height: var(--spatial-stage-height);
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #202020;
+}
+
+.workspace :global(.spatial-image-wrap) {
+  flex: 0 1 auto;
+  margin: 0;
+}
+
+.workspace :global(.spatial-cloud-canvas) {
+  height: var(--spatial-stage-height);
+  min-height: 0;
+  flex: none;
+}
+
+.workspace :global(.spatial-panel-foot) {
+  margin: 0;
+  min-height: 64px;
+  flex: 1;
+  border-color: #383838;
+  color: #c8c4cd;
+  line-height: 1.65;
+}
+
+.workspace :global(.spatial-toolbar) {
+  height: auto;
+  min-height: 72px;
+  padding: 16px 20px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 14px 24px;
+  border-color: #383838;
+}
+
+.workspace :global(.spatial-floor-toggle) { font-size: 10px; line-height: 1.5; }
+.workspace :global(.spatial-toolbar .toolbar-button) { min-height: 38px; padding: 10px 14px; }
+.workspace :global(.spatial-toolbar .toolbar-button:first-of-type) { margin-left: auto; }
+.workspace :global(.spatial-toolbar .toolbar-button:hover:not(:disabled)) {
+  background: #303030;
+  transform: none;
+  box-shadow: none;
+}
+
+.workspace :global(.spatial-disclaimer) { color: #625b68; max-width: none; }
+
+@media (max-width: 900px) {
+  .workspace :global(.spatial-fields) { grid-template-columns: minmax(0, 1fr) minmax(130px, .6fr); gap: 18px; }
+  .workspace :global(.spatial-action) { grid-column: 1 / -1; margin-top: 0; }
+  .workspace :global(.spatial-toolbar .toolbar-button:first-of-type) { margin-left: 0; }
+}
+
+@media (max-width: 700px) {
+  .workspace { --spatial-stage-height: 360px; }
+  .workspace :global(.spatial-visual-grid) { grid-template-columns: minmax(0, 1fr); }
+  .workspace :global(.spatial-frame-panel) { border-right: 0; border-bottom: 1px solid #383838; }
+  .workspace :global(.spatial-results) { grid-template-columns: minmax(0, 1fr); }
+  .workspace :global(.spatial-content) { padding: 18px; }
+  .workspace :global(.spatial-toolbar) { padding: 16px; gap: 16px; }
+}
+
+@media (max-width: 480px) {
+  .workspace :global(.spatial-fields) { grid-template-columns: minmax(0, 1fr); }
+  .workspace :global(.spatial-action) { grid-column: auto; }
+  .workspace :global(.spatial-toolbar .spatial-floor-toggle) { width: 100%; }
+  .workspace :global(.spatial-toolbar .toolbar-button) { justify-content: center; flex: 1; }
+  .workspace :global(.spatial-object) { flex-wrap: wrap; }
+}

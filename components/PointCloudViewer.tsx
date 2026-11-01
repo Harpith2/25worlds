@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -20,6 +19,7 @@ import type { SpatialResult } from "@/lib/types";
 
 export type PointCloudControls = {
   reset: () => void;
+  focusSelected: () => void;
 };
 
 type Props = {
@@ -28,12 +28,92 @@ type Props = {
   overlay?: SpatialResult | null;
   selectedObjectId?: string | null;
   showFloor?: boolean;
+  alignToFloor?: boolean;
 };
 
 type WorldTransform = {
   center: THREE.Vector3;
   scale: number;
 };
+
+
+function isXYZ(value: number[] | undefined): value is [number, number, number] {
+  return Boolean(value && value.length === 3 && value.every(Number.isFinite));
+}
+
+// Pick the normal that points into the reconstructed room, not toward an
+// arbitrary Pi3X coordinate axis. Floor points themselves do not vote.
+function roomFacingFloor(
+  plane: NonNullable<SpatialResult["floor"]>,
+  geometry: THREE.BufferGeometry,
+  world: WorldTransform
+) {
+  const normal = new THREE.Vector3(...plane.normal);
+  const length = normal.length();
+  normal.divideScalar(length);
+  let offset = plane.offset / length;
+  let displayOffset = world.scale * (normal.dot(world.center) + offset);
+  const positions = geometry.getAttribute("position");
+  const diagonal = geometry.boundingBox!.getSize(new THREE.Vector3()).length();
+  const residual = Number.isFinite(plane.rms_residual) ? Math.abs(plane.rms_residual) : 0;
+  const band = Math.max(diagonal * 0.002, residual * world.scale * 3, 1e-6);
+  const distances: number[] = [];
+  const step = Math.max(1, Math.ceil(positions.count / 12000));
+  for (let i = 0; i < positions.count; i += step) {
+    const distance = normal.x * positions.getX(i) +
+      normal.y * positions.getY(i) + normal.z * positions.getZ(i) + displayOffset;
+    if (Number.isFinite(distance) && Math.abs(distance) > band) distances.push(distance);
+  }
+  distances.sort((a, b) => a - b);
+  // Median rejects isolated below-floor artifacts and ignores dense floor samples.
+  // If the median straddles zero, use the robust extent on each side.
+  let side = 0;
+  if (distances.length) {
+    const middle = Math.floor(distances.length / 2);
+    side = distances.length % 2 ? distances[middle] :
+      (distances[middle - 1] + distances[middle]) / 2;
+    if (Math.abs(side) <= band) {
+      side = distances[Math.floor((distances.length - 1) * 0.1)] +
+        distances[Math.ceil((distances.length - 1) * 0.9)];
+    }
+  }
+  // An entirely flat cloud has no geometric evidence for either side.
+  if (side < 0 || (Math.abs(side) <= 1e-10 && normal.y < 0)) {
+    normal.negate();
+    offset = -offset;
+    displayOffset = -displayOffset;
+  }
+  return { normal, offset, displayOffset };
+}
+
+function fitCamera(
+  camera: THREE.PerspectiveCamera,
+  controls: TrackballControls,
+  bounds: THREE.Box3,
+  resetDirection = false
+) {
+  const center = bounds.getCenter(new THREE.Vector3());
+  const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() / 2, 0.04);
+  const verticalHalfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+  const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * camera.aspect);
+  const distance = radius * 1.2 / Math.sin(Math.min(verticalHalfFov, horizontalHalfFov));
+  const direction = resetDirection ? new THREE.Vector3(6.4, 3.5, 7.8) :
+    camera.position.clone().sub(controls.target);
+  if (direction.lengthSq() < 1e-10) direction.set(6.4, 3.5, 7.8);
+  direction.normalize();
+  // Clear Trackball's pending zoom/pan before assigning a new target.
+  controls.reset();
+  camera.up.set(0, 1, 0);
+  controls.target.copy(center);
+  camera.position.copy(center).addScaledVector(direction, distance);
+  controls.minDistance = Math.min(0.08, distance * 0.1);
+  controls.maxDistance = Math.max(140, distance * 4);
+  camera.near = Math.max(0.0001, Math.min(0.01, distance / 1000));
+  camera.far = Math.max(3000, distance * 10);
+  camera.updateProjectionMatrix();
+  camera.lookAt(center);
+  controls.update();
+}
 
 function disposeOverlay(group: THREE.Group) {
   for (const object of [...group.children]) {
@@ -63,6 +143,7 @@ export const PointCloudViewer =
         overlay = null,
         selectedObjectId = null,
         showFloor = true,
+        alignToFloor = false,
       },
       ref
     ) {
@@ -77,6 +158,15 @@ export const PointCloudViewer =
       const worldRef =
         useRef<WorldTransform | null>(null);
 
+      const sceneState = useRef<{
+        root: THREE.Group;
+        grid: THREE.GridHelper;
+        camera: THREE.PerspectiveCamera;
+        controls: TrackballControls;
+        geometry: THREE.BufferGeometry;
+      } | null>(null);
+      const focusRef = useRef<() => void>(() => {});
+
       const resetRef =
         useRef<() => void>(() => {});
 
@@ -84,6 +174,7 @@ export const PointCloudViewer =
         ref,
         () => ({
           reset: () => resetRef.current(),
+          focusSelected: () => focusRef.current(),
         }),
         []
       );
@@ -151,8 +242,14 @@ export const PointCloudViewer =
         controls.minDistance = 0.08;
         controls.maxDistance = 140;
 
+        // Base geometry and semantic overlays share one display-only transform.
+        const root = new THREE.Group();
+        scene.add(root);
         const overlays = new THREE.Group();
-        scene.add(overlays);
+        root.add(overlays);
+        const grid = new THREE.GridHelper(10, 20, 0x639c77, 0x384d40);
+        grid.visible = false;
+        scene.add(grid);
 
         overlayRef.current = overlays;
 
@@ -252,9 +349,18 @@ export const PointCloudViewer =
 
           base.frustumCulled = false;
 
-          scene.add(base);
-
-          resetRef.current = () => controls.reset();
+          root.add(base);
+          geometry.computeBoundingBox();
+          sceneState.current = {
+            root, grid, camera, controls,
+            geometry,
+          };
+          resetRef.current = () => {
+            root.updateMatrixWorld(true);
+            fitCamera(camera, controls,
+              geometry!.boundingBox!.clone().applyMatrix4(root.matrixWorld), true);
+          };
+          resetRef.current();
 
           observer = new ResizeObserver(() => {
             if (
@@ -314,7 +420,12 @@ export const PointCloudViewer =
           controls.dispose();
 
           disposeOverlay(overlays);
-          scene.remove(overlays);
+          root.remove(overlays);
+          grid.geometry.dispose();
+          const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+          gridMaterials.forEach((m) => m.dispose());
+          sceneState.current = null;
+          focusRef.current = () => {};
 
           overlayRef.current = null;
           worldRef.current = null;
@@ -332,6 +443,58 @@ export const PointCloudViewer =
           errorLabel?.remove();
         };
       }, [data]);
+
+      // Always derive the pose from the original normalized geometry.
+      // Repeated toggles never accumulate rotations or translations.
+      useEffect(() => {
+        const state = sceneState.current;
+        const world = worldRef.current;
+        if (!state || !world) return;
+        state.root.quaternion.identity();
+        state.root.position.set(0, 0, 0);
+        const plane = overlay?.floor;
+        const validPlane = Boolean(plane && isXYZ(plane.normal) &&
+          Math.hypot(...plane.normal) > 1e-8 && Number.isFinite(plane.offset));
+        state.grid.visible = alignToFloor && validPlane;
+        if (alignToFloor && plane && validPlane) {
+          const { normal, displayOffset } = roomFacingFloor(plane, state.geometry, world);
+          state.root.quaternion.setFromUnitVectors(normal, new THREE.Vector3(0, 1, 0));
+          // After rotation, y = n.q. Translate the candidate floor to y = 0;
+          // the room-facing half-space then lies above it.
+          state.root.position.y = displayOffset;
+        }
+        state.root.updateMatrixWorld(true);
+        resetRef.current();
+      }, [data, overlay?.floor, alignToFloor]);
+
+      useEffect(() => {
+        focusRef.current = () => {
+          const state = sceneState.current;
+          const world = worldRef.current;
+          const selected = overlay?.objects.find(
+            (object) => String(object.object_id) === selectedObjectId);
+          if (!state || !world || !selected) return;
+          const box = new THREE.Box3();
+          if (isXYZ(selected.bbox_min_xyz) && isXYZ(selected.bbox_max_xyz) &&
+              selected.bbox_min_xyz.every((v, i) => v <= selected.bbox_max_xyz![i])) {
+            box.set(new THREE.Vector3(...selected.bbox_min_xyz),
+              new THREE.Vector3(...selected.bbox_max_xyz));
+          } else {
+            selected.sample_xyz.filter(isXYZ).forEach((xyz) =>
+              box.expandByPoint(new THREE.Vector3(...xyz)));
+          }
+          if (box.isEmpty() && isXYZ(selected.center_xyz)) {
+            box.expandByPoint(new THREE.Vector3(...selected.center_xyz));
+          }
+          if (box.isEmpty()) return;
+          box.min.sub(world.center).multiplyScalar(world.scale);
+          box.max.sub(world.center).multiplyScalar(world.scale);
+          state.root.updateMatrixWorld(true);
+          box.applyMatrix4(state.root.matrixWorld);
+          fitCamera(state.camera, state.controls, box);
+        };
+        return () => { focusRef.current = () => {}; };
+      }, [data, overlay, selectedObjectId]);
 
       // --------------------------------------------------
       // SAM / RANSAC OVERLAYS
@@ -362,11 +525,8 @@ export const PointCloudViewer =
           size: number,
           opacity: number
         ) {
-          const valid = points.filter(
-            (xyz) =>
-              xyz.length === 3 &&
-              xyz.every(Number.isFinite)
-          );
+          // Render every returned sample (up to 5,000 in the current backend).
+          const valid = points.filter(isXYZ);
 
           if (!valid.length) return;
 

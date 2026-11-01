@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -21,6 +20,8 @@ import {
   PointCloudViewer,
   type PointCloudControls,
 } from "@/components/PointCloudViewer";
+
+import styles from "./SpatialAnalysis.module.css";
 
 import type {
   ReconstructionJob,
@@ -107,6 +108,8 @@ export function SpatialAnalysis({
   const [showFloor, setShowFloor] =
     useState(false);
 
+  const [alignToFloor, setAlignToFloor] = useState(false);
+
   const [error, setError] = useState("");
 
   const viewer = useRef<PointCloudControls>(null);
@@ -144,6 +147,7 @@ export function SpatialAnalysis({
     setSelectedId(null);
     setFrameIndex(0);
     setShowFloor(false);
+    setAlignToFloor(false);
     setError("");
   }, [job?.id]);
 
@@ -352,7 +356,7 @@ export function SpatialAnalysis({
 
   return (
     <section
-      className="spatial-section"
+      className={`${styles.workspace} spatial-section`}
       id="spatial"
       aria-labelledby="spatial-heading"
     >
@@ -414,6 +418,7 @@ export function SpatialAnalysis({
               disabled={!ready || busy}
               className="spatial-fields"
             >
+              <div className="spatial-query-field">
               <label htmlFor="sam-concept">
                 Object to find
               </label>
@@ -456,6 +461,9 @@ export function SpatialAnalysis({
                 ))}
               </div>
 
+              </div>
+
+              <div className="spatial-frame-field">
               <label htmlFor="sam-frame">
                 Video frame
               </label>
@@ -490,6 +498,7 @@ export function SpatialAnalysis({
                   )
                 )}
               </select>
+              </div>
 
               <button
                 className="primary-button spatial-action"
@@ -651,6 +660,14 @@ export function SpatialAnalysis({
                   </div>
                 )}
 
+                {selected && (
+                  <div className="spatial-stat-row">
+                    <span>Displayed object samples</span>
+                    <strong>{selected.sample_xyz.filter((xyz) =>
+                      xyz.length === 3 && xyz.every(Number.isFinite)).length.toLocaleString()}</strong>
+                  </div>
+                )}
+
                 {result.warnings.map(
                   (warning, index) => (
                     <p
@@ -686,8 +703,12 @@ export function SpatialAnalysis({
                 01 / SAM source frame
               </div>
 
+              <div className="spatial-frame-stage">
               {frameImage && result ? (
-                <div className="spatial-image-wrap">
+                <div className="spatial-image-wrap" style={{
+                  aspectRatio: `${result.image_width} / ${result.image_height}`,
+                  maxWidth: `calc(var(--spatial-stage-height) * ${result.image_width / result.image_height})`,
+                }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={frameImage}
@@ -806,6 +827,8 @@ export function SpatialAnalysis({
                 </div>
               )}
 
+              </div>
+
               <p className="spatial-panel-foot">
                 Coral = exact SAM mask of selected
                 object; outlines = instance selection
@@ -827,6 +850,7 @@ export function SpatialAnalysis({
                     overlay={result}
                     selectedObjectId={selectedId}
                     showFloor={showFloor}
+                    alignToFloor={alignToFloor}
                   />
                 ) : (
                   <div className="spatial-placeholder">
@@ -863,12 +887,33 @@ export function SpatialAnalysis({
               Show candidate floor plane
             </label>
 
+            <label className="spatial-floor-toggle">
+              <input
+                type="checkbox"
+                checked={alignToFloor}
+                disabled={!ply || !result?.floor ||
+                  !result.floor.normal.every(Number.isFinite) ||
+                  Math.hypot(...result.floor.normal) <= 1e-8 ||
+                  !Number.isFinite(result.floor.offset)}
+                onChange={(event) => setAlignToFloor(event.target.checked)}
+              />
+              Align to estimated floor
+            </label>
+
             <button
               className="toolbar-button"
               type="button"
-              onClick={() =>
-                viewer.current?.reset()
-              }
+              disabled={!ply || !selected || !(selected.grounded_points > 0)}
+              onClick={() => viewer.current?.focusSelected()}
+            >
+              Focus on object
+            </button>
+
+            <button
+              className="toolbar-button"
+              type="button"
+              disabled={!ply}
+              onClick={() => viewer.current?.reset()}
             >
               Reset view
             </button>
@@ -877,6 +922,7 @@ export function SpatialAnalysis({
       </div>
 
       <p className="spatial-disclaimer">
+        Alignment changes only the display; the upward direction is heuristic.
         The floor is a SAM-guided RANSAC plane
         estimate, not a verified walkable surface.
         Pi3X coordinates are approximate and not a

@@ -25,6 +25,8 @@ export interface SpatialObject {
   mask_pixels: number;
   grounded_points: number;
   center_xyz: [number, number, number];
+  bbox_min_xyz?: [number, number, number];
+  bbox_max_xyz?: [number, number, number];
   sample_xyz: number[][];
   distance_to_floor_plane?: number;
 }
