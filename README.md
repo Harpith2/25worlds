@@ -1,6 +1,6 @@
 ## Why?
 
-We have a fair idea of what lies ahead for AI, but most of what we think is infinite isn't. There are constraints on everything. Compute, time, capital, and probably a lot more. As AI systems become more capable, the question is no longer just *what can we build?* but *how efficiently can we make it work?*
+We have a fair idea of what lies ahead for AI, but most of what we think is infinite isn't. There are constraints on everything. Compute, time, capital, and probably a lot more. As AI systems become more capable, the question is no longer just what can we build? but how efficiently can we make it work?
 
 We've won over **10 hackathons in the past year, including MIT, Harvard, Penn, and Princeton**, and we've noticed the same pattern. It's becoming easier to build something impressive in a controlled setting, but making it reliable, adaptable, and economical in the real world is a completely different challenge. We've experienced firsthand how quickly the costs of compute, development time, and physical experimentation can add up.
 
