@@ -9,3 +9,6 @@ AI agents are increasingly capable of interacting with digital environments, yet
 **We want to make this process more efficient.**
 
 That's why we built **25worlds**, a **zero-shot spatial intelligence layer** designed to give AI agents an initial understanding of unseen physical environments and a spatial memory for navigation from just an ordinary camera video.
+
+
+Description
