@@ -1,0 +1,4 @@
+modal>=1.0
+fastapi>=0.115,<1
+python-multipart>=0.0.12
+pytest>=8
