@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, CheckCircle2, CircleHelp, CloudUpload, Download, FileVideo2, Focus, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, Video, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CheckCircle2, CircleHelp, CloudUpload, Download, FileVideo2, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, X } from "lucide-react";
 import { PointCloudViewer, type PointCloudControls } from "@/components/PointCloudViewer";
 import { type ReconstructionJob, type UIMode, statuses } from "@/lib/types";
 
@@ -118,15 +118,15 @@ export function Studio() {
     }
   }
 
-  async function download(kind: "preview" | "full") {
+  async function download() {
     if (!jobId || !activeCode || downloading) return;
     setDownloading(true); setError("");
     try {
-      const response = await fetch(`/api/jobs/${jobId}/${kind}`, { headers: apiHeaders(activeCode) });
+      const response = await fetch(`/api/jobs/${jobId}/full`, { headers: apiHeaders(activeCode) });
       if (!response.ok) throw new Error(await decodeError(response));
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement("a");
-      link.href = url; link.download = `25worlds-${jobId.slice(0, 8)}-${kind}.ply`;
+      link.href = url; link.download = `25worlds-${jobId.slice(0, 8)}-full.ply`;
       document.body.appendChild(link); link.click(); link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (cause) {
@@ -146,7 +146,6 @@ export function Studio() {
         <a className="wordmark" href="#top" aria-label="25worlds home"><span className="wordmark-number">25</span>worlds</a>
         <nav className="nav-links" aria-label="Main navigation">
           <a href="#workspace">Start</a>
-          <a href="#how-it-works">How it works</a>
         </nav>
       </div>
     </header>
@@ -177,9 +176,9 @@ export function Studio() {
                   <div className="selected-row"><div className="file-icon"><FileVideo2 size={18}/></div><div className="selected-file-name"><strong title={file.name}>{file.name}</strong><span>{formatBytes(file.size)} {selectedDuration !== null && Number.isFinite(selectedDuration) ? `· ${selectedDuration.toFixed(1)} sec` : ""}</span></div><button className="small-outline" onClick={() => fileInput.current?.click()} type="button" disabled={inProgress}>Change</button></div>
                 </div>}
                 <div className="tip"><span>Move slowly and capture overlapping views. Even lighting and visible surfaces work best.</span></div>
-                <div className="auth-form"><label htmlFor="access">Demo access code <span>· cloud GPU</span></label><div className="input-wrap"><LockKeyhole size={17}/><input id="access" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} placeholder="Enter your access code" autoComplete="off" disabled={inProgress}/></div>
+                <div className="auth-form"><label htmlFor="access">Demo access code </label><div className="input-wrap"><LockKeyhole size={17}/><input id="access" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} placeholder="Enter your access code" autoComplete="off" disabled={inProgress}/></div>
                   <button className="primary-button" type="button" onClick={submit} disabled={!file || inProgress}>
-                    {inProgress ? <><LoaderCircle className="spin" size={18}/> Reconstructing…</> : <>Reconstruct my world <ArrowUpRight size={19}/></>}
+                    {inProgress ? <><LoaderCircle className="spin" size={18}/> Reconstructing…</> : <>Reconstruct <ArrowUpRight size={19}/></>}
                   </button>
                 </div>
                 {error && <div role="alert" className="error-alert"><CircleHelp size={17}/><span>{error}</span><button aria-label="Dismiss error" type="button" onClick={() => setError("")}><X size={16}/></button></div>}
@@ -189,7 +188,7 @@ export function Studio() {
           <div className="viewer-card">
             <div className="viewer-head"><h3 className="area-label">Viewer</h3>{(mode === "completed" || inProgress) && <span className="viewer-state">{mode === "completed" ? "3D SCENE READY" : "PROCESSING"}</span>}</div>
             <div className="viewer-stage">
-              {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><p>Your 3D reconstruction appears here, ready to explore from every angle.</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
+              {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><p>3D Reconstruction</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
             </div>
             <div className="viewer-toolbar">
               <div className="viewer-toolbar-text"><MousePointer2 size={15}/><span>{mode === "completed" ? `${(job?.preview_points || 0).toLocaleString()} points in preview` : "Your 3D canvas"}</span></div>
@@ -198,16 +197,19 @@ export function Studio() {
                 <span className="toolbar-tip"><Maximize2 size={14}/> {mode === "completed" ? "Drag · Zoom" : "Interactive 3D"}</span>
               </div>
             </div>
-            {mode === "completed" && job && <div className="result-strip"><div><div className="result-overline"><CheckCircle2 size={15}/> YOUR RECONSTRUCTION IS READY</div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.frame_count ?? "Multiple"} frames · Browser preview optimized for performance</span></div><div className="result-buttons"><button type="button" onClick={() => download("preview")} disabled={downloading}>Preview PLY <Download size={16}/></button><button type="button" className="result-primary" onClick={() => download("full")} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
+            {mode === "completed" && job && <div className="result-strip"><div><div className="result-overline"><CheckCircle2 size={15}/> YOUR RECONSTRUCTION IS READY</div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.frame_count ?? "Multiple"} frames · Browser preview optimized for performance</span></div><div className="result-buttons"><button type="button" className="result-primary" onClick={download} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
           </div>
         </div>
         {mode === "completed" && <div className="new-project-row"><span>Want to try a different environment?</span><button type="button" onClick={resetForNew}>Start a new reconstruction <ArrowRight size={16}/></button></div>}
       </section>
-      <section id="how-it-works" className="how-section"><div className="how-heading"><h2 className="section-label">How it works</h2></div><div className="how-grid">
-        <div className="how-card"><span className="how-number">01</span><div className="how-icon how-icon-accent"><Video size={30} strokeWidth={1.6}/></div><h3>Capture a space.</h3><p>Record a short walkthrough with overlapping frames. No special scanner or depth camera needed.</p></div>
-        <div className="how-card"><span className="how-number">02</span><div className="how-icon how-icon-accent"><Focus size={30} strokeWidth={1.6}/></div><h3>Reconstruct your space.</h3><p>Our Modal GPU worker estimates 3D geometry from the video using a reconstruction algorithm.</p></div>
-        <div className="how-card"><span className="how-number">03</span><div className="how-icon how-icon-accent"><MousePointer2 size={30} strokeWidth={1.6}/></div><h3>Explore your world.</h3><p>Orbit around an interactive colored point cloud and download the reconstruction.</p></div>
-      </div></section>
+      <section id="how-it-works" className="how-section" aria-labelledby="how-title">
+        <div className="how-heading"><h2 className="section-label" id="how-title">How it works</h2></div>
+        <ul className="how-list">
+          <li className="how-item"><p>Record a short walkthrough with overlapping frames. No special scanner or depth camera needed.</p></li>
+          <li className="how-item"><p>Our Modal GPU worker estimates 3D geometry from the video using a reconstruction algorithm.</p></li>
+          <li className="how-item"><p>Orbit around an interactive colored point cloud and download the reconstruction.</p></li>
+        </ul>
+      </section>
     </main>
     <footer className="footer" aria-hidden="true"><div className="site-width footer-content" /></footer>
   </div>;
