@@ -7,12 +7,55 @@ export interface ReconstructionJob {
   status: JobStatus;
   message?: string;
   error?: string;
+  spatial_ready?: boolean;
+  spatial_frames?: number;
   frame_count?: number;
   total_points?: number;
   preview_points?: number;
   duration_seconds?: number;
   created_at?: string;
 }
+
+
+export interface SpatialObject {
+  object_id: string | number;
+  label: string;
+  sam_confidence: number | null;
+  bounds_xyxy: [number, number, number, number];
+  mask_pixels: number;
+  grounded_points: number;
+  center_xyz: [number, number, number];
+  sample_xyz: number[][];
+  distance_to_floor_plane?: number;
+}
+
+export interface SpatialPlane {
+  normal: [number, number, number];
+  offset: number;
+  inlier_count: number;
+  inlier_ratio: number;
+  rms_residual: number;
+  sample_xyz: number[][];
+}
+
+export interface SpatialResult {
+  frame_index: number;
+  image_width: number;
+  image_height: number;
+  object_concept: string;
+  source: string;
+  floor: SpatialPlane | null;
+  objects: SpatialObject[];
+  warnings: string[];
+}
+
+export type SpatialResponse = {
+  status: "queued" | "failed" | "completed";
+  error?: string;
+  result?: SpatialResult;
+  frame_image_url?: string | null;
+};
+
 
 export const statuses: Record<UIMode, { title: string; description: string; step: number }> = {
   ready: { title: "Ready when you are", description: "Upload a walkthrough to create your first 3D world.", step: 0 },

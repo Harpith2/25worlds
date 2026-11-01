@@ -26,9 +26,8 @@ button:focus-visible,input:focus-visible,a:focus-visible,[role="button"]:focus-v
 
 .primary-button:hover:not(:disabled){transform:translate(-2px,-2px);box-shadow:7px 7px 0 var(--ink)}
 
-.hero{padding:64px 0 48px}
-.hero-intro{max-width:850px;margin:0 0 24px;font-family:var(--font-redaction35),Georgia,serif;font-size:clamp(22px,2.4vw,32px);font-weight:400;line-height:1.23;letter-spacing:-.02em;color:var(--ink);text-wrap:balance}
-.hero-tagline{max-width:100%;margin:0;font-family:var(--font-redaction35),Georgia,serif;font-size:clamp(22px,2.4vw,32px);font-weight:400;line-height:1.23;letter-spacing:-.02em;text-wrap:balance}
+.hero{padding:56px 0 24px}
+.hero-intro{max-width:1000px;margin:0;font-family:var(--font-redaction35),Georgia,serif;font-size:clamp(22px,2.4vw,32px);font-weight:400;line-height:1.4;letter-spacing:-.02em;color:var(--ink);text-wrap:balance}
 .workspace-section{padding-top:36px;padding-bottom:83px;scroll-margin-top:18px}
 .section-title-row{display:flex;align-items:end;justify-content:space-between;margin-bottom:23px;gap:24px}
 
@@ -148,7 +147,7 @@ button,.nav-links a,.drop-target{border-radius:0}
 .primary-button,.small-outline,.toolbar-button,.result-buttons button{border-radius:0}
 @media(max-width:620px){.workspace-section{padding-top:26px}.wordmark{font-size:28px}.footer .wordmark{font-size:22px}}
 
-@media(max-width:620px){.hero{padding:36px 0 30px}.hero-intro,.hero-tagline{font-size:clamp(22px,5vw,28px)}}
+@media(max-width:620px){.hero{padding:36px 0 16px}.hero-intro{font-size:clamp(22px,5vw,28px)}}
 
 .wordmark-number{font-size:.84em}
 
@@ -157,3 +156,381 @@ button,.nav-links a,.drop-target{border-radius:0}
 .how-item::before{content:"\2022";flex-shrink:0;font-size:18px;line-height:1.2;color:var(--ink)}
 .how-item p{margin:0;font-size:13px;line-height:1.65;color:var(--ink)}
 @media(max-width:620px){.how-item{padding:18px 20px}.how-item p{font-size:12px}}
+
+
+/* Spatial intelligence workspace */
+
+.spatial-section {
+  padding: 12px 0 82px;
+  scroll-margin-top: 22px;
+}
+
+.spatial-title-row p {
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 350px;
+  text-align: right;
+}
+
+.spatial-kicker {
+  font-size: 10px;
+  letter-spacing: .6px;
+  font-weight: 700;
+}
+
+.spatial-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.spatial-description {
+  font-size: 12px;
+  line-height: 1.75;
+  margin: 0;
+}
+
+.spatial-not-ready {
+  min-height: 135px;
+  border: 1px dashed var(--ink);
+  padding: 24px 15px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.spatial-not-ready strong {
+  font-size: 12px;
+}
+
+.spatial-not-ready span {
+  font-size: 11px;
+  line-height: 1.6;
+  max-width: 280px;
+}
+
+.spatial-fields {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.spatial-fields:disabled {
+  opacity: .55;
+}
+
+.spatial-fields > label {
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.spatial-input {
+  width: 100%;
+  height: 47px;
+  border: 1px solid var(--ink);
+  background: var(--surface);
+  padding: 0 12px;
+  color: var(--ink);
+  font-size: 13px;
+  border-radius: 0;
+}
+
+.spatial-input:focus-visible {
+  outline: 2px solid var(--purple);
+  outline-offset: 2px;
+}
+
+.spatial-suggestions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.spatial-suggestions button {
+  padding: 7px 10px;
+  border: 1px solid var(--ink);
+  font-size: 10px;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.spatial-suggestions button.is-selected {
+  background: var(--purple);
+}
+
+.spatial-action {
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.spatial-action svg:last-child {
+  margin-left: auto;
+}
+
+.spatial-caption {
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.spatial-results {
+  border-top: 1px solid var(--ink);
+  padding-top: 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.spatial-result-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+}
+
+.spatial-object-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 236px;
+  overflow: auto;
+}
+
+.spatial-object {
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  padding: 12px;
+  background: transparent;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+}
+
+.spatial-object.is-active {
+  background: var(--purple);
+}
+
+.spatial-object > span:first-child {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 5px;
+}
+
+.spatial-object strong {
+  font-size: 12px;
+}
+
+.spatial-object small {
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.spatial-object-coords {
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.spatial-stat-row {
+  border-top: 1px solid var(--ink);
+  padding-top: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.spatial-stat-row strong {
+  font-size: 10px;
+  text-align: right;
+}
+
+/* Side-by-side SAM image and 3D cloud */
+
+.spatial-visual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 475px;
+  background: var(--ink);
+  color: var(--surface);
+}
+
+.spatial-frame-panel,
+.spatial-cloud-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.spatial-frame-panel {
+  border-right: 1px solid #555;
+}
+
+.spatial-visual-label {
+  font-size: 10px;
+  letter-spacing: .75px;
+  padding: 15px 16px;
+  border-bottom: 1px solid #555;
+  font-weight: 750;
+}
+
+.spatial-image-wrap {
+  position: relative;
+  align-self: center;
+  width: 100%;
+  margin: auto 0;
+}
+
+.spatial-image-wrap img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.spatial-mask-box {
+  position: absolute;
+  border: 2px solid var(--purple);
+  background: rgba(198,181,246,.08);
+  padding: 0;
+  outline: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.spatial-mask-box.is-active {
+  border: 3px solid #ffb099;
+  background: rgba(255,176,153,.12);
+}
+
+.spatial-mask-box:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.spatial-cloud-canvas {
+  height: 395px;
+  position: relative;
+  flex: 1;
+  min-height: 280px;
+}
+
+.spatial-placeholder {
+  flex: 1;
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 15px;
+  color: #c6b5f6;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.spatial-panel-foot {
+  padding: 14px 16px;
+  border-top: 1px solid #555;
+  margin-top: auto;
+  font-size: 9px;
+  line-height: 1.5;
+  min-height: 50px;
+}
+
+.spatial-toolbar {
+  border-top: 1px solid #555;
+}
+
+.spatial-floor-toggle {
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.spatial-floor-toggle input {
+  accent-color: var(--purple);
+  width: 15px;
+  height: 15px;
+}
+
+.spatial-disclaimer {
+  font-size: 10px;
+  line-height: 1.6;
+  margin: 20px 0 0;
+  max-width: 860px;
+}
+
+@media (max-width: 1100px) {
+  .spatial-visual-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .spatial-frame-panel {
+    border-right: 0;
+    border-bottom: 1px solid #555;
+  }
+
+  .spatial-cloud-canvas {
+    height: 350px;
+  }
+}
+
+@media (max-width: 850px) {
+  .spatial-visual-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .spatial-frame-panel {
+    border-bottom: 0;
+    border-right: 1px solid #555;
+  }
+}
+
+@media (max-width: 620px) {
+  .spatial-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .spatial-title-row p {
+    text-align: left;
+  }
+
+  .spatial-section {
+    padding-bottom: 58px;
+  }
+
+  .spatial-visual-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .spatial-frame-panel {
+    border-right: 0;
+    border-bottom: 1px solid #555;
+  }
+
+  .spatial-cloud-canvas {
+    height: 360px;
+  }
+}
+

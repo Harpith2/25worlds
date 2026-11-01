@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, CheckCircle2, CircleHelp, CloudUpload, Download, FileVideo2, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CircleHelp, CloudUpload, Download, FileVideo2, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, X } from "lucide-react";
 import { PointCloudViewer, type PointCloudControls } from "@/components/PointCloudViewer";
 import { type ReconstructionJob, type UIMode, statuses } from "@/lib/types";
+import { SpatialAnalysis } from "@/components/SpatialAnalysis";
 
 const MAX_SIZE = 60 * 1024 * 1024;
 const ALLOWED = /\.(mp4|mov|m4v)$/i;
@@ -151,9 +152,8 @@ export function Studio() {
     </header>
 
     <main className="site-width">
-      <section className="hero" aria-labelledby="hero-tagline">
-        <p className="hero-intro">An AI agent system that can help robots learn and navigate an unseen environment with a single walkthrough camera video.</p>
-        <h1 className="hero-tagline" id="hero-tagline">To lower cost, time and increase the efficiency of learning.</h1>
+      <section className="hero" aria-labelledby="hero-intro">
+        <h1 className="hero-intro" id="hero-intro">An AI agent system that can help robots initially learn and navigate an unseen environment with a single walkthrough camera video.</h1>
       </section>
       <section className="workspace-section" id="workspace">
         <div className="section-title-row"><h2 className="section-label">Start</h2></div>
@@ -186,7 +186,7 @@ export function Studio() {
             </div>
           </div>
           <div className="viewer-card">
-            <div className="viewer-head"><h3 className="area-label">Viewer</h3>{(mode === "completed" || inProgress) && <span className="viewer-state">{mode === "completed" ? "3D SCENE READY" : "PROCESSING"}</span>}</div>
+            <div className="viewer-head"><h3 className="area-label">Viewer</h3>{(mode === "completed" || inProgress) && <span className="viewer-state">{mode === "completed" ? "3D scene" : "PROCESSING"}</span>}</div>
             <div className="viewer-stage">
               {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><p>3D Reconstruction</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
             </div>
@@ -197,11 +197,12 @@ export function Studio() {
                 <span className="toolbar-tip"><Maximize2 size={14}/> {mode === "completed" ? "Drag · Zoom" : "Interactive 3D"}</span>
               </div>
             </div>
-            {mode === "completed" && job && <div className="result-strip"><div><div className="result-overline"><CheckCircle2 size={15}/> YOUR RECONSTRUCTION IS READY</div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.frame_count ?? "Multiple"} frames · Browser preview optimized for performance</span></div><div className="result-buttons"><button type="button" className="result-primary" onClick={download} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
+            {mode === "completed" && job && <div className="result-strip"><div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.frame_count ?? "Multiple"} frames · Browser preview optimized for performance</span></div><div className="result-buttons"><button type="button" className="result-primary" onClick={download} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
           </div>
         </div>
         {mode === "completed" && <div className="new-project-row"><span>Want to try a different environment?</span><button type="button" onClick={resetForNew}>Start a new reconstruction <ArrowRight size={16}/></button></div>}
       </section>
+      
       <section id="how-it-works" className="how-section" aria-labelledby="how-title">
         <div className="how-heading"><h2 className="section-label" id="how-title">How it works</h2></div>
         <ul className="how-list">
@@ -210,6 +211,12 @@ export function Studio() {
           <li className="how-item"><p>Orbit around an interactive colored point cloud and download the reconstruction.</p></li>
         </ul>
       </section>
+
+      <SpatialAnalysis
+  job={job}
+  ply={ply}
+  accessCode={activeCode}
+/>
     </main>
     <footer className="footer" aria-hidden="true"><div className="site-width footer-content" /></footer>
   </div>;
