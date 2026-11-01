@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, ArrowUpRight, Check, CheckCircle2, CircleHelp, CloudUpload, Download, FileVideo2, Focus, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, ShieldCheck, Sparkles, Video, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, CheckCircle2, CircleHelp, CloudUpload, Download, FileVideo2, Focus, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, Video, X } from "lucide-react";
 import { PointCloudViewer, type PointCloudControls } from "@/components/PointCloudViewer";
 import { type ReconstructionJob, type UIMode, statuses } from "@/lib/types";
 
 const MAX_SIZE = 60 * 1024 * 1024;
 const ALLOWED = /\.(mp4|mov|m4v)$/i;
-const STAGE_LABELS = ["Upload video", "Reconstruct", "Explore"];
 
 function EmptyViewerArt() {
   return <svg aria-hidden="true" viewBox="0 0 410 270" fill="none" className="empty-drawing">
@@ -103,7 +102,7 @@ export function Studio() {
     if (!file || inProgress) return;
     if (accessCode.trim().length < 10) { setError("Enter the demo access code before creating a world."); return; }
     if (selectedDuration !== null && (selectedDuration < 4 || selectedDuration > 60)) {
-      setError("Choose a walkthrough between 4 and 30 seconds."); return;
+      setError("Choose a walkthrough between 4 and 60 seconds."); return;
     }
     setError(""); setPly(null); setJob(null); setJobId(""); setActiveCode(""); setMode("uploading");
     try {
@@ -146,7 +145,7 @@ export function Studio() {
       <div className="site-width topbar">
         <a className="wordmark" href="#top" aria-label="25worlds home"><span className="wordmark-number">25</span>worlds</a>
         <nav className="nav-links" aria-label="Main navigation">
-          <a href="#workspace">Studio</a>
+          <a href="#workspace">Start</a>
           <a href="#how-it-works">How it works</a>
         </nav>
       </div>
@@ -158,7 +157,7 @@ export function Studio() {
         <h1 className="hero-tagline" id="hero-tagline">To lower cost, time and increase the efficiency of learning.</h1>
       </section>
       <section className="workspace-section" id="workspace">
-        <div className="section-title-row"><h2 className="section-label">Studio</h2></div>
+        <div className="section-title-row"><h2 className="section-label">Start</h2></div>
         <div className="workspace-grid">
           <div className="left-column">
             <div className="upload-card">
@@ -172,12 +171,12 @@ export function Studio() {
                   <div className="upload-illustration"><CloudUpload size={33} strokeWidth={1.6}/></div>
                   <strong>Drop your world here.</strong>
                   <span>Drag a video or <u>browse your files</u></span>
-                  <small>MP4 / MOV &nbsp; · &nbsp; UP TO 60 MB &nbsp; · &nbsp; 4–30 SEC</small>
+                  <small>MP4 / MOV &nbsp; · &nbsp; UP TO 60 MB &nbsp; · &nbsp; 4–60 SEC</small>
                 </div> : <div className="selected-video">
                   {fileURL && <video src={fileURL} controls muted playsInline preload="metadata" onLoadedMetadata={(e) => setSelectedDuration(e.currentTarget.duration)} aria-label="Selected video preview" />}
                   <div className="selected-row"><div className="file-icon"><FileVideo2 size={18}/></div><div className="selected-file-name"><strong title={file.name}>{file.name}</strong><span>{formatBytes(file.size)} {selectedDuration !== null && Number.isFinite(selectedDuration) ? `· ${selectedDuration.toFixed(1)} sec` : ""}</span></div><button className="small-outline" onClick={() => fileInput.current?.click()} type="button" disabled={inProgress}>Change</button></div>
                 </div>}
-                <div className="tip"><Sparkles size={16}/><span>Move slowly and capture overlapping views. Even lighting and visible surfaces work best.</span></div>
+                <div className="tip"><span>Move slowly and capture overlapping views. Even lighting and visible surfaces work best.</span></div>
                 <div className="auth-form"><label htmlFor="access">Demo access code <span>· cloud GPU</span></label><div className="input-wrap"><LockKeyhole size={17}/><input id="access" type="password" value={accessCode} onChange={(e) => setAccessCode(e.target.value)} placeholder="Enter your access code" autoComplete="off" disabled={inProgress}/></div>
                   <button className="primary-button" type="button" onClick={submit} disabled={!file || inProgress}>
                     {inProgress ? <><LoaderCircle className="spin" size={18}/> Reconstructing…</> : <>Reconstruct my world <ArrowUpRight size={19}/></>}
@@ -186,21 +185,11 @@ export function Studio() {
                 {error && <div role="alert" className="error-alert"><CircleHelp size={17}/><span>{error}</span><button aria-label="Dismiss error" type="button" onClick={() => setError("")}><X size={16}/></button></div>}
               </div>
             </div>
-            <div className={`status-card ${inProgress ? "status-busy" : ""}`} role="status" aria-live="polite">
-              <div className="status-icon">{mode === "completed" ? <CheckCircle2 size={24}/> : inProgress ? <LoaderCircle className="spin" size={22}/> : <Sparkles size={23}/>}</div>
-              <div className="status-copy"><strong>{job?.message && inProgress ? stage.title : stage.title}</strong><span>{job?.message && inProgress ? job.message : stage.description}</span></div>
-              <span className="status-badge">{mode === "ready" ? "READY" : mode === "completed" ? "DONE" : mode === "failed" ? "ERROR" : "IN PROGRESS"}</span>
-            </div>
-            <div className="stepper" aria-label="Reconstruction steps">{STAGE_LABELS.map((item, index) => {
-              const done = mode === "completed" ? true : stage.step > index;
-              const active = stage.step === index;
-              return <div className={`step-item ${done ? "step-done" : ""} ${active ? "step-active" : ""}`} key={item}><span className="step-circle">{done ? <Check size={14}/> : String(index + 1).padStart(2, "0")}</span><div><strong>{item}</strong><span>{["Your source video", "Cloud reconstruction", "A new perspective"][index]}</span></div></div>;
-            })}</div>
           </div>
           <div className="viewer-card">
-            <div className="viewer-head"><h3 className="area-label">World viewer</h3><span className="viewer-state">{mode === "completed" ? "3D SCENE READY" : inProgress ? "PROCESSING" : "AWAITING CAPTURE"}</span></div>
+            <div className="viewer-head"><h3 className="area-label">Viewer</h3>{(mode === "completed" || inProgress) && <span className="viewer-state">{mode === "completed" ? "3D SCENE READY" : "PROCESSING"}</span>}</div>
             <div className="viewer-stage">
-              {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><h3>A new perspective awaits.</h3><p>Your 3D reconstruction appears here, ready to explore from every angle.</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
+              {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><p>Your 3D reconstruction appears here, ready to explore from every angle.</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
             </div>
             <div className="viewer-toolbar">
               <div className="viewer-toolbar-text"><MousePointer2 size={15}/><span>{mode === "completed" ? `${(job?.preview_points || 0).toLocaleString()} points in preview` : "Your 3D canvas"}</span></div>
@@ -216,11 +205,10 @@ export function Studio() {
       </section>
       <section id="how-it-works" className="how-section"><div className="how-heading"><h2 className="section-label">How it works</h2></div><div className="how-grid">
         <div className="how-card"><span className="how-number">01</span><div className="how-icon how-icon-accent"><Video size={30} strokeWidth={1.6}/></div><h3>Capture a space.</h3><p>Record a short walkthrough with overlapping frames. No special scanner or depth camera needed.</p></div>
-        <div className="how-card"><span className="how-number">02</span><div className="how-icon how-icon-accent"><Focus size={30} strokeWidth={1.6}/></div><h3>Reconstruct your space.</h3><p>Our Modal GPU worker estimates 3D geometry from the video using pretrained models.</p></div>
+        <div className="how-card"><span className="how-number">02</span><div className="how-icon how-icon-accent"><Focus size={30} strokeWidth={1.6}/></div><h3>Reconstruct your space.</h3><p>Our Modal GPU worker estimates 3D geometry from the video using a reconstruction algorithm.</p></div>
         <div className="how-card"><span className="how-number">03</span><div className="how-icon how-icon-accent"><MousePointer2 size={30} strokeWidth={1.6}/></div><h3>Explore your world.</h3><p>Orbit around an interactive colored point cloud and download the reconstruction.</p></div>
       </div></section>
-      <div className="closing-banner"><span><ShieldCheck size={19}/> Made for exploring, not for safety-critical navigation.</span><span>01 / GEOMETRY RECONSTRUCTION</span></div>
     </main>
-    <footer className="footer"><div className="site-width footer-content"><a className="wordmark footer-mark" href="#top" aria-label="25worlds home"><span className="wordmark-number">25</span>worlds</a><p>See your world differently.</p></div></footer>
+    <footer className="footer" aria-hidden="true"><div className="site-width footer-content" /></footer>
   </div>;
 }
