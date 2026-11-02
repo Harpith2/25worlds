@@ -1,5 +1,5 @@
-import { forwardApi, getConnection, requestError } from "@/lib/modal";
-import { parseFusionResponse } from "@/lib/fusion-response";
+import { getConnection, requestError } from "@/lib/modal";
+import { FusionResponseError, parseFusionResponse } from "@/lib/fusion-response";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,13 +9,20 @@ type Context = { params: Promise<{ id: string }> };
 async function forwardFusion(upstream: string, init: RequestInit): Promise<Response> {
   // Consume the upstream body inside the handler's try/catch. Re-encode JSON
   // instead of forwarding stale compressed content-length headers or HTML.
-  const response = await forwardApi(upstream, init);
+  let response: Response | undefined;
   try {
+    response = await fetch(upstream, { ...init, cache: "no-store", signal: AbortSignal.timeout(45000) });
     const payload = await parseFusionResponse(response);
     return Response.json(payload, { status: response.status, headers: { "cache-control": "no-store" } });
   } catch (cause) {
-    return Response.json({ detail: cause instanceof Error ? cause.message : "Invalid fusion response." }, {
-      status: response.status >= 400 && response.status <= 599 ? response.status : 502,
+    const status = response && response.status >= 400 && response.status <= 599 ? response.status
+      : response ? 502 : 503;
+    console.error(`Fusion proxy ${init.method || "GET"} failed (HTTP ${status})`, cause);
+    return Response.json({
+      detail: cause instanceof Error ? cause.message : "Invalid fusion response.",
+      retryable: cause instanceof FusionResponseError ? cause.retryable : true,
+    }, {
+      status,
       headers: { "cache-control": "no-store" },
     });
   }

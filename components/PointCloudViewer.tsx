@@ -27,6 +27,7 @@ type Props = {
   pointSize: number;
   overlay?: SpatialResult | null;
   selectedObjectId?: string | null;
+  showAllObjects?: boolean;
   showFloor?: boolean;
   alignToFloor?: boolean;
 };
@@ -142,6 +143,7 @@ export const PointCloudViewer =
         pointSize,
         overlay = null,
         selectedObjectId = null,
+        showAllObjects = false,
         showFloor = true,
         alignToFloor = false,
       },
@@ -471,20 +473,24 @@ export const PointCloudViewer =
         focusRef.current = () => {
           const state = sceneState.current;
           const world = worldRef.current;
-          const selected = overlay?.objects.find(
-            (object) => String(object.object_id) === selectedObjectId);
-          if (!state || !world || !selected) return;
+          const objects = overlay?.objects.filter(
+            object => showAllObjects || String(object.object_id) === selectedObjectId) ?? [];
+          if (!state || !world || !objects.length) return;
           const box = new THREE.Box3();
-          if (isXYZ(selected.bbox_min_xyz) && isXYZ(selected.bbox_max_xyz) &&
-              selected.bbox_min_xyz.every((v, i) => v <= selected.bbox_max_xyz![i])) {
-            box.set(new THREE.Vector3(...selected.bbox_min_xyz),
-              new THREE.Vector3(...selected.bbox_max_xyz));
-          } else {
-            selected.sample_xyz.filter(isXYZ).forEach((xyz) =>
-              box.expandByPoint(new THREE.Vector3(...xyz)));
-          }
-          if (box.isEmpty() && isXYZ(selected.center_xyz)) {
-            box.expandByPoint(new THREE.Vector3(...selected.center_xyz));
+          for (const selected of objects) {
+            const objectBox = new THREE.Box3();
+            if (isXYZ(selected.bbox_min_xyz) && isXYZ(selected.bbox_max_xyz) &&
+                selected.bbox_min_xyz.every((v, i) => v <= selected.bbox_max_xyz![i])) {
+              objectBox.set(new THREE.Vector3(...selected.bbox_min_xyz),
+                new THREE.Vector3(...selected.bbox_max_xyz));
+            } else {
+              selected.sample_xyz.filter(isXYZ).forEach((xyz) =>
+                objectBox.expandByPoint(new THREE.Vector3(...xyz)));
+            }
+            if (objectBox.isEmpty() && isXYZ(selected.center_xyz)) {
+              objectBox.expandByPoint(new THREE.Vector3(...selected.center_xyz));
+            }
+            box.union(objectBox);
           }
           if (box.isEmpty()) return;
           box.min.sub(world.center).multiplyScalar(world.scale);
@@ -494,7 +500,7 @@ export const PointCloudViewer =
           fitCamera(state.camera, state.controls, box);
         };
         return () => { focusRef.current = () => {}; };
-      }, [data, overlay, selectedObjectId]);
+      }, [data, overlay, selectedObjectId, showAllObjects]);
 
       // --------------------------------------------------
       // SAM / RANSAC OVERLAYS
@@ -567,7 +573,9 @@ export const PointCloudViewer =
           );
         }
 
-        // Only the selected SAM object is highlighted.
+        // All matches share the SAME display transform as the base cloud.
+        const visible = overlay.objects.filter(object => showAllObjects || String(object.object_id) === selectedObjectId);
+        visible.forEach(object => addHighlight(object.sample_xyz, 0xffb099, 0.08, 1));
         const selected = overlay.objects.find(
           (object) =>
             String(object.object_id) ===
@@ -575,13 +583,6 @@ export const PointCloudViewer =
         );
 
         if (!selected) return;
-
-        addHighlight(
-          selected.sample_xyz,
-          0xffb099,
-          0.08,
-          1
-        );
 
         // Small center marker on the selected object.
         if (
@@ -614,6 +615,7 @@ export const PointCloudViewer =
         data,
         overlay,
         selectedObjectId,
+        showAllObjects,
         showFloor,
       ]);
 
@@ -622,7 +624,7 @@ export const PointCloudViewer =
           ref={mountRef}
           className="pointcloud-surface"
           role="img"
-          aria-label="3D point cloud with selected SAM object and optional candidate floor overlay"
+          aria-label="3D point cloud with grounded object matches and optional candidate floor overlay"
         />
       );
     }

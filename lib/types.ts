@@ -80,6 +80,9 @@ export interface FusedSpatialObject extends SpatialObject {
   frame_indices: number[];
   unique_sample_points: number;
   association_overlap: number | null;
+  association_status?: "ambiguous" | "single_observation" | "geometry_supported" | "tracking_supported";
+  tracking_ids?: string[];
+  association_evidence?: { tracking_merges: number; geometry_merges: number };
   observations: { frame_index: number; object_id: string | number; grounded_points: number; sample_points: number }[];
 }
 
@@ -88,12 +91,20 @@ export interface SpatialFusionResult extends SpatialResult {
   objects: FusedSpatialObject[];
   association_tolerance: number;
   voxel_size: number;
+  version?: string;
+  tracking_frames?: number;
+  full_geometry_points?: number;
+  geometry_file?: string;
+  diagnostics?: { sam_masks: number; grounded_observations: number; insufficient_depth_masks: number;
+    initial_tracklets: number; geometric_splits: number; reconciled_fragments: number; ambiguous_groups: number };
 }
 
 export interface SpatialFusionProgress {
   completed_frames: number;
   total_frames: number;
-  stage: "preparing" | "analyzing" | "associating" | "completed";
+  stage: "preparing" | "analyzing" | "tracking_object" | "tracking_floor" | "grounding" | "associating" | "exporting" | "completed";
+  tracking_frames?: number;
+  tracking_total?: number;
   current_frame?: number | null;
 }
 

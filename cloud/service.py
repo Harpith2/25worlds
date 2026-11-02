@@ -27,8 +27,9 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
+from fusion_cache import FUSION_VERSION, fusion_paths as tracked_fusion_paths
 
 SERVICE_REVISION = hashlib.sha256(
     Path(__file__).read_bytes()
@@ -195,6 +196,18 @@ def create_api(
 
     # Prevent duplicate submissions within one API process.
     analysis_locks: dict[str, asyncio.Lock] = {}
+    refresh_lock = asyncio.Lock()
+
+    @api.exception_handler(Exception)
+    async def explain_unexpected_error(request: Request, exc: Exception):
+        logger.exception("API revision %s: %s %s failed",
+                         SERVICE_REVISION, request.method, request.url.path)
+        return JSONResponse(status_code=500, content={
+            "detail": "Spatial API request failed. Check the Modal web logs for the traceback.",
+            "retryable": request.method == "GET",
+            "revision": SERVICE_REVISION,
+            "fusion_version": FUSION_VERSION,
+        }, headers={"Cache-Control": "no-store"})
 
     @api.exception_handler(HTTPException)
     async def explain_http_error(
@@ -243,9 +256,18 @@ def create_api(
 
     async def refresh() -> None:
         try:
-            await volume.reload.aio()
+            # Bound status requests and avoid overlapping reloads in this process.
+            async with asyncio.timeout(20):
+                async with refresh_lock:
+                    await volume.reload.aio()
         except FileNotFoundError:
             pass
+        except Exception as exc:
+            logger.exception("Could not refresh job storage (API revision %s)", SERVICE_REVISION)
+            raise HTTPException(
+                503, "Job storage is temporarily unavailable. Retry this status request.",
+                headers={"Retry-After": "3", "Cache-Control": "no-store"},
+            ) from exc
 
     @api.get("/api/health")
     def health():
@@ -254,6 +276,7 @@ def create_api(
             "service": "25worlds",
             "phase": "spatial-grounding",
             "revision": SERVICE_REVISION,
+            "fusion_version": FUSION_VERSION,
         }
 
     @api.post(
@@ -502,7 +525,7 @@ def create_api(
 
         image_url = None
 
-        if image_path.is_file():
+        if not result_file.name.startswith("fusion-") and image_path.is_file():
             image_url = (
                 "data:image/jpeg;base64,"
                 + base64.b64encode(
@@ -875,11 +898,7 @@ def create_api(
         return sorted(frames)
 
     def fusion_paths(folder: Path, concept: str, frames: list[int]):
-        digest = hashlib.sha256(json.dumps(
-            {"concept": concept, "frame_indices": frames}, sort_keys=True,
-        ).encode()).hexdigest()[:12]
-        target = folder / "analysis" / f"fusion-{digest}.json"
-        return target, target.with_suffix(".request.json")
+        return tracked_fusion_paths(folder, concept, frames)
 
     @api.post("/api/jobs/{job_id}/fusion", dependencies=[Depends(require_access)])
     async def start_fusion(job_id: str, request: Request):
@@ -935,6 +954,22 @@ def create_api(
         concept = validate_analysis(manifest, concept, frames[0])
         target, marker = fusion_paths(folder, concept, frames)
         return await analysis_state(folder, target, marker, frames[0])
+
+    @api.get("/api/jobs/{job_id}/fusion/geometry", dependencies=[Depends(require_access)])
+    async def fusion_geometry(job_id: str, concept: str, frame_indices: str):
+        folder, manifest = await load_manifest(job_id)
+        try:
+            frames = [int(value) for value in frame_indices.split(",")]
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid fusion frame indices.") from exc
+        frames = fusion_request(manifest, concept, frames)
+        concept = validate_analysis(manifest, concept, frames[0])
+        target, _ = fusion_paths(folder, concept, frames)
+        geometry = target.with_suffix(".geometry.npz")
+        if not target.is_file() or not geometry.is_file():
+            raise HTTPException(409, "Complete tracked fusion before downloading object geometry.")
+        return FileResponse(geometry, media_type="application/octet-stream",
+                            filename=f"25worlds-{job_id[:8]}-objects.npz")
 
     @api.delete(
         "/api/jobs/{job_id}",

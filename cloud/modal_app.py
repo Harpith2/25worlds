@@ -51,6 +51,7 @@ web_image = (
         remote_path="/opt/worldpilot/service.py",
         copy=True,
     )
+    .add_local_file(str(ROOT / "fusion_cache.py"), remote_path="/opt/worldpilot/fusion_cache.py", copy=True)
 )
 
 
@@ -96,17 +97,23 @@ gpu_image = (
 
 spatial_image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("ffmpeg")
     .pip_install(
         "numpy==1.26.4",
         "pillow",
         "openai>=1.99,<3",
-        "meta-sam-parser",
+        "meta-sam-parser==0.1.0",
+        "scipy==1.14.1",
     )
     .add_local_file(
         str(ROOT / "spatial.py"),
         remote_path="/opt/worldpilot/spatial.py",
         copy=True,
     )
+    .add_local_file(str(ROOT / "fusion_cache.py"), remote_path="/opt/worldpilot/fusion_cache.py", copy=True)
+    .add_local_file(str(ROOT / "sam_video.py"), remote_path="/opt/worldpilot/sam_video.py", copy=True)
+    .add_local_file(str(ROOT / "tracked_fusion.py"), remote_path="/opt/worldpilot/tracked_fusion.py", copy=True)
+    .add_local_file(str(ROOT / "colmap_pipeline.py"), remote_path="/opt/worldpilot/colmap_pipeline.py", copy=True)
 )
 
 
@@ -414,77 +421,43 @@ def analyze_scene(
     volumes={"/data": data},
     secrets=[modal.Secret.from_name("25worlds-meta")],
     timeout=7200,
+    memory=8192,
+    cpu=4,
     max_containers=2,
     retries=0,
 )
 def fuse_scene(job_id: str, concept: str, frame_indices: list[int]):
-    import numpy as np
     if not re.fullmatch(r"[0-9a-f]{32}", job_id):
         raise ValueError("Invalid job ID")
     concept = concept.strip().lower()
     if not concept or len(concept) > 120:
         raise ValueError("Invalid object concept")
-    if (len(frame_indices) < 2 or
-        any(isinstance(f, bool) or not isinstance(f, int) for f in frame_indices) or
-        len(set(frame_indices)) != len(frame_indices)):
-        raise ValueError("Choose at least 2 distinct integer frames")
+    if (len(frame_indices) < 2 or any(isinstance(f, bool) or not isinstance(f, int) for f in frame_indices)
+            or len(set(frame_indices)) != len(frame_indices)):
+        raise ValueError("Choose at least two distinct reconstructed frames")
     frames = sorted(frame_indices)
     data.reload()
     folder = Path("/data") / job_id
-    digest = hashlib.sha256(json.dumps(
-        {"concept": concept, "frame_indices": frames}, sort_keys=True,
-    ).encode()).hexdigest()[:12]
-    target = folder / "analysis" / f"fusion-{digest}.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
+    sys.path.insert(0, "/opt/worldpilot")
+    from fusion_cache import fusion_paths
+    from sam_video import atomic_json
+    from tracked_fusion import run_tracked_fusion
+    target, _ = fusion_paths(folder, concept, frames)
+    if target.is_file() and target.with_suffix(".geometry.npz").is_file():
+        return {"analysis_file": str(target.relative_to(folder)), "status": "completed"}
     progress_file = target.with_suffix(".progress.json")
 
-    def report(completed: int, stage: str, current_frame: int | None = None):
-        progress = {
-            "completed_frames": completed, "total_frames": len(frames),
+    def report(completed: int, stage: str, current_frame: int | None = None, **extra):
+        atomic_json(progress_file, {"completed_frames": completed, "total_frames": len(frames),
             "stage": stage, "current_frame": current_frame,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-        temp = progress_file.parent / f".{uuid.uuid4().hex}.tmp"
-        temp.write_text(json.dumps(progress), encoding="utf-8")
-        temp.replace(progress_file)
+            "updated_at": datetime.now(timezone.utc).isoformat(), **extra})
         data.commit()
 
     report(0, "preparing")
-    with np.load(folder / "spatial.npz", allow_pickle=False) as saved:
-        xyz = saved["points"]
-        valid = saved["valid_mask"].astype(bool) & np.isfinite(xyz).all(-1)
-        if any(f < 0 or f >= len(xyz) for f in frames):
-            raise ValueError("Frame index outside reconstruction")
-        pts = xyz[valid]
-        if len(pts) < 12:
-            raise ValueError("Reconstruction has too few valid points")
-        sample = pts[::max(1, len(pts) // 20000)]
-        scene_scale = float(np.linalg.norm(np.percentile(sample, 98, axis=0) - np.percentile(sample, 2, axis=0)))
-    del xyz, valid, pts
-    if not np.isfinite(scene_scale) or scene_scale <= 1e-10:
-        raise ValueError("Reconstruction has degenerate geometry")
-    results = []
-    digest = hashlib.sha256(concept.encode()).hexdigest()[:12]
-    for index, frame in enumerate(frames):
-        report(index, "analyzing", frame)
-        cached = folder / "analysis" / f"frame-{frame:03d}-{digest}.json"
-        if cached.is_file():
-            results.append(json.loads(cached.read_text(encoding="utf-8")))
-        else:
-            # Reuse the existing worker locally; each result is still saved.
-            results.append(analyze_scene.local(job_id, concept, frame))
-        report(index + 1, "analyzing", frame)
-    report(len(frames), "associating")
-    sys.path.insert(0, "/opt/worldpilot")
-    from spatial import fuse_observations
-    result = fuse_observations(results, scene_scale=scene_scale)
-    result["job_id"] = job_id
-    result["created_at"] = datetime.now(timezone.utc).isoformat()
-    temp = target.parent / f".{uuid.uuid4().hex}.tmp"
-    temp.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
-    temp.replace(target)
-    report(len(frames), "completed")
-    return result
+    asyncio.run(run_tracked_fusion(folder, concept, frames, target, report, data.commit))
+    # The API reads the durable result. Do not serialize the full object cloud
+    # through FunctionCall.get during every completion/status check.
+    return {"analysis_file": str(target.relative_to(folder)), "status": "completed"}
 
 
 # ---------------------------------------------------------

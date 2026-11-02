@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PointCloudViewer, type PointCloudControls } from "./PointCloudViewer";
 import type { ReconstructionJob, SpatialFusionProgress, SpatialFusionResult, SpatialResult } from "@/lib/types";
 import styles from "./MultiFrameFusion.module.css";
-import { parseFusionResponse } from "@/lib/fusion-response";
+import { fetchFusionStatus, parseFusionResponse } from "@/lib/fusion-response";
 
 type Props = {
   job: ReconstructionJob | null;
@@ -24,8 +24,11 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
   const [result, setResult] = useState<SpatialFusionResult | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [pollNotice, setPollNotice] = useState("");
   const [align, setAlign] = useState(true);
   const [showFloor, setShowFloor] = useState(false);
+  const [showAll, setShowAll] = useState(true);
+  const [downloading, setDownloading] = useState(false);
   const displayOverlay = useMemo(() => result
     ? { ...result, floor: result.floor ?? floorEstimate?.floor ?? null }
     : floorEstimate ?? null, [result, floorEstimate]);
@@ -40,21 +43,25 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
   useEffect(() => {
     generation.current++;
     setPhase("idle"); setQuery(null); setResult(null); setSelected(null); setError("");
-    setAlign(true); setShowFloor(false); setProgress(null);
+    setAlign(true); setShowFloor(false); setProgress(null); setPollNotice(""); setShowAll(true);
   }, [job?.id]);
 
   useEffect(() => {
     if (!query || !job?.id || phase !== "queued") return;
     let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
         if (Date.now() > query.deadline) throw new Error("Fusion is taking too long. Check Modal logs and retry.");
         const qs = new URLSearchParams({ concept: query.concept, frame_indices: query.frames.join(",") });
-        const payload = await parseFusionResponse(await fetch(`/api/jobs/${job.id}/fusion?${qs}`, {
-          headers: { "x-worldpilot-key": accessCode }, cache: "no-store",
-        }));
+        const payload = await fetchFusionStatus(`/api/jobs/${job.id}/fusion?${qs}`, {
+          headers: { "x-worldpilot-key": accessCode }, cache: "no-store", signal: controller.signal,
+        }, (attempt, limit) => {
+          if (!cancelled) setPollNotice(`Connection interrupted. Reconnecting (${attempt}/${limit})…`);
+        });
         if (cancelled) return;
+        setPollNotice("");
         if (payload.progress) setProgress(payload.progress);
         if (payload.status === "failed") throw new Error(payload.error || "Fusion failed. Check Modal logs and retry.");
         if (payload.status === "completed" && payload.result) {
@@ -66,7 +73,7 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
       }
     };
     timer = setTimeout(poll, 1200);
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => { cancelled = true; controller.abort(); clearTimeout(timer); };
   }, [query, job?.id, phase, accessCode]);
 
   async function run() {
@@ -77,7 +84,7 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
     const n = Math.min(count === "all" ? framesAvailable : count, framesAvailable);
     const frames = Array.from({ length: n }, (_, i) => Math.round(i * (framesAvailable - 1) / (n - 1)));
     setProgress({ completed_frames: 0, total_frames: n, stage: "preparing" });
-    setError(""); setPhase("starting"); setQuery(null); setResult(null); setSelected(null);
+    setError(""); setPollNotice(""); setShowAll(true); setPhase("starting"); setQuery(null); setResult(null); setSelected(null);
     try {
       const payload = await parseFusionResponse(await fetch(`/api/jobs/${job.id}/fusion`, {
         method: "POST", headers: { "x-worldpilot-key": accessCode, "content-type": "application/json" },
@@ -96,11 +103,40 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
     }
   }
 
+  async function downloadGeometry() {
+    if (!result?.geometry_file || !job?.id || downloading) return;
+    setDownloading(true);
+    try {
+      const qs = new URLSearchParams({ concept: result.object_concept, frame_indices: result.frame_indices.join(",") });
+      const response = await fetch(`/api/jobs/${job.id}/fusion/geometry?${qs}`, {
+        headers: { "x-worldpilot-key": accessCode }, cache: "no-store",
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.detail || `Object geometry download failed (HTTP ${response.status}).`);
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = `25worlds-${job.id.slice(0, 8)}-objects.npz`; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not download object geometry."); }
+    finally { setDownloading(false); }
+  }
+
+  const tracking = progress?.stage === "tracking_object" || progress?.stage === "tracking_floor";
+  const progressValue = tracking ? progress?.tracking_frames ?? 0 : progress?.completed_frames ?? 0;
+  const progressMax = tracking ? progress?.tracking_total ?? framesAvailable : progress?.total_frames ?? query?.frames.length ?? 1;
+  const stageMessage = progress?.stage === "tracking_object" ? `Tracking object instances across ${progressMax} aligned views…`
+    : progress?.stage === "tracking_floor" ? `Tracking floor evidence across ${progressMax} aligned views…`
+    : progress?.stage === "associating" ? "Checking visibility and geometry, then reconciling fragmented tracks…"
+    : progress?.stage === "exporting" ? "Saving full object geometry and preparing viewer samples…"
+    : `Grounded ${progressValue} / ${progressMax} views${progress?.current_frame != null ? ` · Processing view ${progress.current_frame+1}` : ""}…`;
+
   return <section className={styles.panel} aria-labelledby="fusion-heading">
     <div className="card-top"><h3 className="area-label" id="fusion-heading">Semantic grounding</h3>
-      <span className="spatial-kicker">SAM 3.1 + COLMAP + MULTI-FRAME FUSION</span></div>
-    <p className={styles.description}>Find an object across reconstructed video frames. SAM masks are grounded in the shared
-      COLMAP world, then geometrically consistent observations are merged and deduplicated.</p>
+      <span className="spatial-kicker">SAM 3.1 VIDEO TRACKING + COLMAP</span></div>
+    <p className={styles.description}>Track object instances across the walkthrough and combine their observed 3D surfaces.
+      Visibility and geometry checks help keep nearby objects separate; uncertain fragments remain visible.</p>
     {!ready && <p className={styles.message} role="status">
       {job?.status === "completed"
         ? "This scene needs aligned spatial data from at least two frames. Reconstruct a new video if necessary."
@@ -110,10 +146,10 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
       <div className={styles.prompt}>
         <label htmlFor="fusion-concept">Object to find</label>
         <input id="fusion-concept" className="spatial-input" value={concept} maxLength={120}
-          placeholder="e.g. table" disabled={busy} onChange={e => setConcept(e.target.value)}
+          placeholder="e.g. sofa or water bottle" disabled={busy} onChange={e => setConcept(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void run(); } }} />
         <div className="spatial-suggestions">
-          {["chair", "table", "plant", "door"].map(example => <button type="button" key={example}
+          {["sofa", "chair", "table", "plant", "door"].map(example => <button type="button" key={example}
             disabled={busy} className={concept === example ? "is-selected" : ""}
             onClick={() => setConcept(example)}>{example}</button>)}
         </div>
@@ -125,20 +161,20 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
           <option value={3}>3 evenly spaced frames</option><option value={5}>5 evenly spaced frames</option>
           <option value={10}>10 evenly spaced frames</option>
         </select><small>{count === "all" ? "Every saved COLMAP frame, including views between the previous samples." : "Evenly spaced across the walkthrough."}</small>
+        <small>Tracking uses all {framesAvailable || "saved"} aligned views to retain continuity; this selection controls which views contribute 3D points.</small>
       </label>
       <div className={styles.action}>
         <button className="primary-button" disabled={!ready || busy || !concept.trim()} onClick={() => void run()} type="button">
           {busy ? "Fusing observations…" : ready ? `Analyze ${Math.min(count === "all" ? framesAvailable : count, framesAvailable)} frames` : "Analyze multiple frames"}
-        </button><small>Saved analyses are reused. Each uncached frame can make two SAM calls. More frames take longer.</small>
+        </button><small>Saved video masks are reused. A new object prompt can require an object-tracking video request and a floor request. Video billing applies.</small>
       </div>
     </div>
     {error && <p role="alert" className={styles.message}>{error}</p>}
     {busy && <div role="status" className={styles.message}>
-      <p style={{ margin: "0 0 8px" }}>{progress?.stage === "associating"
-        ? "All frames analyzed. Associating objects and deduplicating points…"
-        : `Analyzed ${progress?.completed_frames ?? 0} / ${progress?.total_frames ?? query?.frames.length ?? 0} frames${progress?.current_frame != null ? ` · Processing frame ${progress.current_frame + 1}` : ""}…`}</p>
-      <progress aria-label="Analyzed reconstruction frames" value={progress?.completed_frames ?? 0}
-        max={Math.max(1, progress?.total_frames ?? query?.frames.length ?? 1)} style={{ width: "min(100%, 440px)" }} />
+      {pollNotice && <p style={{ margin: "0 0 8px" }}>{pollNotice}</p>}
+      <p style={{ margin: "0 0 8px" }}>{stageMessage}</p>
+      <progress aria-label="Processed reconstruction views" value={progressValue}
+        max={Math.max(1, progressMax)} style={{ width: "min(100%, 440px)" }} />
     </div>}
     {result && <>
       <div className={styles.summary}>
@@ -147,18 +183,23 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
       </div>
       {result.objects.length ? <div className={styles.objects}>
         {result.objects.map(obj => <button key={obj.object_id} type="button"
-          aria-pressed={String(obj.object_id) === selected}
-          className={`spatial-object ${String(obj.object_id) === selected ? "is-active" : ""}`}
-          onClick={() => setSelected(String(obj.object_id))}>
+          aria-pressed={!showAll && String(obj.object_id) === selected}
+          className={`spatial-object ${!showAll && String(obj.object_id) === selected ? "is-active" : ""}`}
+          onClick={() => { setSelected(String(obj.object_id)); setShowAll(false); }}>
           <span><strong>{obj.label} · {obj.object_id}</strong>
-            <small>{obj.observation_count} observations · {obj.unique_sample_points.toLocaleString()} unique sampled points</small>
+            <small>{obj.observation_count} observations · {obj.unique_sample_points.toLocaleString()} deduplicated 3D points</small>
+            <small>{obj.association_status === "geometry_supported" ? "Tracking / geometry agreement"
+              : obj.association_status === "tracking_supported" ? "Tracking supported · limited geometric confirmation"
+              : obj.association_status === "ambiguous" ? "Uncertain association · kept separate"
+              : "Single observation · identity unconfirmed"}</small>
             <small>Seen in frames {obj.frame_indices.map(f => f + 1).join(", ")}</small>
           </span>
         </button>)}
-      </div> : <p className={styles.message}>No grounded matches in these frames. Try another visible object or analyze more frames.</p>}
+      </div> : <p className={styles.message}>No grounded matches. Check the detected mask and insufficient-depth counts below, or try a simpler visible object name.</p>}
       <div className={styles.stats}>
         <span>Floor estimate: <strong>{displayOverlay?.floor ? `${Math.round(displayOverlay.floor.inlier_ratio * 100)}% inliers · unverified` : "Not detected"}</strong></span>
-        <span>Association: <strong>shared geometry + surface overlap</strong></span>
+        <span>Association: <strong>video identity + visibility + shared geometry</strong></span>
+        {result.diagnostics && <span>{result.diagnostics.sam_masks} masks · {result.diagnostics.grounded_observations} grounded observations · {result.diagnostics.insufficient_depth_masks} masks without sufficient depth · {result.diagnostics.reconciled_fragments} fragments reconciled</span>}
       </div>
     </>}
     <div className="viewer-head"><h3 className="area-label">Multi-frame object map</h3>
@@ -166,19 +207,22 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
     </div>
     <div className={styles.canvas}>
       {ply ? <PointCloudViewer ref={viewer} data={ply} pointSize={.023} overlay={displayOverlay}
-        selectedObjectId={selected} showFloor={showFloor} alignToFloor={align} />
+        selectedObjectId={showAll ? null : selected} showAllObjects={Boolean(result && showAll)} showFloor={showFloor} alignToFloor={align} />
         : <div className={styles.placeholder}>Your reconstructed world and fused object highlights will appear here.</div>}
     </div>
     <div className={`viewer-toolbar ${styles.toolbar}`}>
+      <label className="spatial-floor-toggle"><input type="checkbox" checked={showAll} disabled={!result?.objects.length}
+        onChange={e => { setShowAll(e.target.checked); if (!e.target.checked && !selected) setSelected(result?.objects[0]?.object_id.toString() ?? null); }} />Show all matches</label>
       <label className="spatial-floor-toggle"><input type="checkbox" checked={align} disabled={!displayOverlay?.floor}
         onChange={e => setAlign(e.target.checked)} />Align to estimated floor</label>
       <label className="spatial-floor-toggle"><input type="checkbox" checked={showFloor} disabled={!displayOverlay?.floor}
         onChange={e => setShowFloor(e.target.checked)} />Show floor evidence</label>
-      <button className="toolbar-button" disabled={!ply || !selected} onClick={() => viewer.current?.focusSelected()} type="button">Focus on object</button>
+      <button className="toolbar-button" disabled={!ply || !result?.objects.length || (!showAll && !selected)} onClick={() => viewer.current?.focusSelected()} type="button">{showAll ? "Focus on matches" : "Focus on object"}</button>
       <button className="toolbar-button" disabled={!ply} onClick={() => viewer.current?.reset()} type="button">Reset view</button>
+      {result?.geometry_file && <button className="toolbar-button" disabled={downloading} onClick={() => void downloadGeometry()} type="button">{downloading ? "Downloading…" : "Full object geometry"}</button>}
     </div>
     {result?.warnings.map((warning, index) => <p className={styles.message} key={index}>{warning}</p>)}
-    <p className={styles.message}>Coral highlights the selected object's merged observations. Ambiguous matches remain separate.
-      IDs belong to this saved object map; hidden surfaces and moving-object tracking are not inferred.</p>
+    <p className={styles.message}>Coral shows {showAll ? "all matched objects" : "the selected object"}. Each object displays up to 5,000 preview points;
+      the download preserves all deduplicated grounded points. Object IDs belong to this saved map. Moving objects and hidden surfaces are not reconstructed.</p>
   </section>;
 }
