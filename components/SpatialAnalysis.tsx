@@ -20,7 +20,7 @@ export function SpatialAnalysis({ job, ply, accessCode, onResult, floorEstimate 
       </div>
       <MultiFrameFusion job={job} ply={ply} accessCode={accessCode} onResult={onResult} floorEstimate={floorEstimate} />
       <p className="spatial-disclaimer">
-        Fusion combines observed surface samples in Pi3X coordinates. Hidden surfaces,
+        Fusion combines observed surface samples in COLMAP coordinates. Hidden surfaces,
         metric scale, floor orientation, and navigability are not independently verified.
       </p>
     </section>

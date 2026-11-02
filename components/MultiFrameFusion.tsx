@@ -98,9 +98,9 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
 
   return <section className={styles.panel} aria-labelledby="fusion-heading">
     <div className="card-top"><h3 className="area-label" id="fusion-heading">Semantic grounding</h3>
-      <span className="spatial-kicker">SAM 3.1 + Pi3X + MULTI-FRAME FUSION</span></div>
+      <span className="spatial-kicker">SAM 3.1 + COLMAP + MULTI-FRAME FUSION</span></div>
     <p className={styles.description}>Find an object across reconstructed video frames. SAM masks are grounded in the shared
-      Pi3X world, then geometrically consistent observations are merged and deduplicated.</p>
+      COLMAP world, then geometrically consistent observations are merged and deduplicated.</p>
     {!ready && <p className={styles.message} role="status">
       {job?.status === "completed"
         ? "This scene needs aligned spatial data from at least two frames. Reconstruct a new video if necessary."
@@ -124,7 +124,7 @@ export function MultiFrameFusion({ job, ply, accessCode, onResult, floorEstimate
           <option value="all">All reconstructed frames ({framesAvailable || "—"})</option>
           <option value={3}>3 evenly spaced frames</option><option value={5}>5 evenly spaced frames</option>
           <option value={10}>10 evenly spaced frames</option>
-        </select><small>{count === "all" ? "Every saved Pi3X frame, including views between the previous samples." : "Evenly spaced across the walkthrough."}</small>
+        </select><small>{count === "all" ? "Every saved COLMAP frame, including views between the previous samples." : "Evenly spaced across the walkthrough."}</small>
       </label>
       <div className={styles.action}>
         <button className="primary-button" disabled={!ready || busy || !concept.trim()} onClick={() => void run()} type="button">

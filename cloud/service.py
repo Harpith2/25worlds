@@ -144,8 +144,8 @@ def extract_frames(video: Path, output: Path) -> int:
         "-loglevel", "error",
         "-nostdin",
         "-i", str(video),
-        "-vf", "fps=0.4,scale=640:-2",
-        "-frames:v", "24",
+        "-vf", "fps=1,scale=960:-2",
+        "-frames:v", "60",
         "-q:v", "3",
         str(output / "%04d.jpg"),
     ]

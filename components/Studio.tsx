@@ -254,8 +254,9 @@ export function Studio() {
                 <span className="toolbar-tip"><Maximize2 size={14}/> {mode === "completed" ? "Drag · Zoom" : "Interactive 3D"}</span>
               </div>
             </div>
+            {mode === "completed" && job?.reconstruction_warnings?.map((warning, index) => <p key={index} style={{ margin: 0, padding: "10px 20px", fontSize: 11, lineHeight: 1.6 }}>{warning}</p>)}
             {mode === "completed" && floorMessage && <p role="status" style={{ margin: 0, padding: "12px 20px", fontSize: 11, lineHeight: 1.6 }}>{floorMessage}</p>}
-            {mode === "completed" && job && <div className="result-strip"><div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.frame_count ?? "Multiple"} frames · Browser preview optimized for performance</span></div><div className="result-buttons"><button type="button" className="result-primary" onClick={download} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
+            {mode === "completed" && job && <div className="result-strip"><div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.spatial_frames ?? job.frame_count ?? "Multiple"} usable frames · COLMAP SfM + MVS</span></div><div className="result-buttons"><button type="button" className="result-primary" onClick={download} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
           </div>
         </div>
         {mode === "completed" && <div className="new-project-row"><span>Want to try a different environment?</span><button type="button" onClick={resetForNew}>Start a new reconstruction <ArrowRight size={16}/></button></div>}
@@ -265,7 +266,7 @@ export function Studio() {
         <div className="how-heading"><h2 className="section-label" id="how-title">How it works</h2></div>
         <ul className="how-list">
           <li className="how-item"><p>Record a short walkthrough with overlapping frames. No special scanner or depth camera needed.</p></li>
-          <li className="how-item"><p>Our Modal GPU worker estimates 3D geometry from the video using a reconstruction algorithm.</p></li>
+          <li className="how-item"><p>COLMAP recovers cameras with classical SfM, then builds depth maps and a dense cloud using MVS.</p></li>
           <li className="how-item"><p>Orbit around an interactive colored point cloud and download the reconstruction.</p></li>
         </ul>
       </section>

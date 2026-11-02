@@ -1,5 +1,5 @@
 
-"""25worlds: SAM 3.1 masks -> Pi3X world points; SAM-guided RANSAC.
+"""25worlds: SAM 3.1 masks -> COLMAP world points; SAM-guided RANSAC.
 
 Runs in the Modal CPU worker.
 The RGB image and point map MUST have matching pixel coordinates.
@@ -105,7 +105,7 @@ def lift_mask(
     pixel_mask: np.ndarray,
     valid_map: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Lift SAM pixels into Pi3X's 3D coordinate system."""
+    """Lift SAM pixels into COLMAP's 3D coordinate system."""
 
     points = np.asarray(point_map)
     mask = np.asarray(pixel_mask, dtype=bool)
@@ -583,7 +583,7 @@ async def analyze_frame(
         != np.asarray(point_map).shape[:2]
     ):
         raise ValueError(
-            "SAM frame and Pi3X point map "
+            "SAM frame and COLMAP point map "
             "must have identical pixels"
         )
 
@@ -649,7 +649,7 @@ async def analyze_frame(
         )
 
     return {
-        "source": "sam-3.1 + Pi3X + RANSAC",
+        "source": "sam-3.1 + COLMAP + RANSAC",
         "object_concept": object_concept,
         "floor": plane,
         "floor_status": (
@@ -674,7 +674,7 @@ def fuse_observations(
     *,
     scene_scale: float,
 ) -> dict[str, Any]:
-    """Conservatively associate static objects already in shared Pi3X space.
+    """Conservatively associate static objects already in shared COLMAP space.
 
     Only observed SAM surface samples are merged. This is not shape completion
     or motion tracking; ambiguous or disjoint surfaces remain separate tracks.
@@ -786,7 +786,7 @@ def fuse_observations(
     if not objects:
         warnings.append("No grounded objects were found in the sampled frames. Try another prompt or frame range.")
     return {
-        "source": "SAM 3.1 + Pi3X multi-frame geometric fusion",
+        "source": "SAM 3.1 + COLMAP multi-frame geometric fusion",
         "frame_index": first.get("frame_index", 0),
         "frame_indices": sorted(r["frame_index"] for r in results),
         "image_width": first.get("image_width", 1),

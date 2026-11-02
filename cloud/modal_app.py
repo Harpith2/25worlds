@@ -1,10 +1,11 @@
 
-"""25worlds: Pi3X reconstruction + SAM 3.1 + RANSAC on Modal.
+"""25worlds: classical COLMAP SfM/MVS + SAM 3.1 + RANSAC on Modal.
 
 Required files in cloud/:
     modal_app.py
     service.py
     spatial.py
+    colmap_pipeline.py
 
 Deploy:
     modal deploy modal_app.py
@@ -33,12 +34,6 @@ data = modal.Volume.from_name(
     create_if_missing=True,
 )
 
-weights = modal.Volume.from_name(
-    "worldpilot-model-weights",
-    create_if_missing=True,
-)
-
-
 # ---------------------------------------------------------
 # FASTAPI IMAGE
 # ---------------------------------------------------------
@@ -60,34 +55,34 @@ web_image = (
 
 
 # ---------------------------------------------------------
-# PI3X GPU IMAGE
+# CLASSICAL COLMAP GPU IMAGE (NO LEARNED RECONSTRUCTION MODELS)
 # ---------------------------------------------------------
 
+# Pin 3.13.0: this release calls its classical matcher type "SIFT".
+# Newer releases use different option names; do not silently switch to main.
 gpu_image = (
-    modal.Image.from_registry(
-        "pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime"
-    )
+    modal.Image.from_registry("nvidia/cuda:12.9.1-devel-ubuntu24.04", add_python="3.11")
     .apt_install(
-        "git",
-        "libglib2.0-0",
-        "libgl1",
+        "git", "cmake", "ninja-build", "build-essential",
+        "libboost-program-options-dev", "libboost-graph-dev", "libboost-system-dev",
+        "libeigen3-dev", "libfreeimage-dev", "libmetis-dev", "libgoogle-glog-dev",
+        "libgtest-dev", "libgmock-dev", "libsqlite3-dev", "libglew-dev",
+        "qt6-base-dev", "libqt6opengl6-dev", "libcgal-dev", "libceres-dev",
+        "libcurl4-openssl-dev", "libssl-dev", "libopenblas-openmp-dev",
     )
-    .pip_install(
-        "numpy==1.26.4",
-        "opencv-python-headless==4.10.0.84",
-        "pillow",
-        "plyfile",
-        "huggingface_hub",
-        "safetensors",
-    )
+    .pip_install("numpy==1.26.4", "pillow", "plyfile")
     .run_commands(
-        "git clone --depth 1 https://github.com/yyfz/Pi3.git /opt/Pi3",
-        "cd /opt/Pi3 && pip install --no-deps -e .",
+        "git clone --depth 1 --branch 3.13.0 https://github.com/colmap/colmap.git /opt/colmap",
+        "cmake -S /opt/colmap -B /opt/colmap/build -GNinja "
+        "-DCMAKE_BUILD_TYPE=Release -DCMAKE_CUDA_ARCHITECTURES=89 "
+        "-DCUDA_ENABLED=ON -DGUI_ENABLED=OFF -DOPENGL_ENABLED=OFF "
+        "-DTESTS_ENABLED=OFF -DCGAL_ENABLED=OFF -DDOWNLOAD_ENABLED=OFF -DBLA_VENDOR=OpenBLAS",
+        "cmake --build /opt/colmap/build --parallel 4",
+        "cmake --install /opt/colmap/build && ldconfig",
+        "colmap -h && colmap patch_match_stereo -h",
     )
-    .env({
-        "HF_HOME": "/model-cache",
-        "PYTHONPATH": "/opt/Pi3",
-    })
+    .env({"QT_QPA_PLATFORM": "offscreen", "OMP_NUM_THREADS": "4", "OPENBLAS_NUM_THREADS": "4"})
+    .add_local_file(str(ROOT / "colmap_pipeline.py"), remote_path="/opt/worldpilot/colmap_pipeline.py", copy=True)
 )
 
 
@@ -154,335 +149,46 @@ def update_manifest(
 
 
 # ---------------------------------------------------------
-# PI3X RECONSTRUCTION
+# COLMAP SFM + MVS RECONSTRUCTION
 # ---------------------------------------------------------
 
 @app.function(
     image=gpu_image,
     gpu="L40S",
-    volumes={
-        "/data": data,
-        "/model-cache": weights,
-    },
-    timeout=900,
+    volumes={"/data": data},
+    timeout=7200,
+    memory=8192,
+    cpu=4,
     max_containers=1,
     retries=0,
 )
 def reconstruct(job_id: str):
-
-    import numpy as np
-    import torch
-
-    from PIL import Image
-    from plyfile import PlyData, PlyElement
-
-    from pi3.models.pi3x import Pi3X
-
-    from pi3.utils.basic import (
-        load_images_as_tensor,
-        write_ply,
-    )
-
-    from pi3.utils.geometry import depth_normal_edge
-
+    import tempfile
+    if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        raise ValueError("Invalid job ID")
     data.reload()
-
     folder = Path("/data") / job_id
-
     if not folder.is_dir():
-        raise FileNotFoundError(
-            "Job upload missing"
-        )
-
+        raise FileNotFoundError("Job upload missing")
+    sys.path.insert(0, "/opt/worldpilot")
+    from colmap_pipeline import reconstruct_colmap
     try:
-
-        # -------------------------------------------------
-        # 1. LOAD VIDEO FRAMES
-        # -------------------------------------------------
-
-        update_manifest(
-            folder,
-            "reconstructing",
-            "Estimating 3D geometry from video frames.",
-        )
-
-        imgs = load_images_as_tensor(
-            str(folder / "frames"),
-            interval=1,
-        ).to("cuda")
-
-        if imgs.shape[0] < 2:
-            raise ValueError(
-                "At least two frames are required"
-            )
-
-        # -------------------------------------------------
-        # 2. LOAD PI3X
-        # -------------------------------------------------
-
-        model = Pi3X.from_pretrained(
-            "yyfz233/Pi3X"
-        ).eval()
-
-        model.disable_multimodal()
-
-        model = model.to("cuda")
-
-        dtype = (
-            torch.bfloat16
-            if torch.cuda.get_device_capability()[0] >= 8
-            else torch.float16
-        )
-
-        # -------------------------------------------------
-        # 3. RUN RECONSTRUCTION
-        # -------------------------------------------------
-
-        with torch.inference_mode(), torch.autocast(
-            "cuda",
-            dtype=dtype,
-        ):
-            result = model(imgs[None])
-
-        # -------------------------------------------------
-        # 4. FILTER NOISY GEOMETRY
-        # -------------------------------------------------
-
-        confident = (
-            torch.sigmoid(
-                result["conf"][..., 0]
-            ) > 0.1
-        )
-
-        non_edge = ~depth_normal_edge(
-            result["local_points"],
-            rtol=0.03,
-            mask=confident,
-        )
-
-        valid_gpu = (
-            confident & non_edge
-        )[0]
-
-        if not valid_gpu.any().item():
-            raise ValueError(
-                "No reliable 3D points; "
-                "record a steadier walkthrough"
-            )
-
-        update_manifest(
-            folder,
-            "exporting",
-            "Saving point cloud and aligned spatial data.",
-        )
-
-        # -------------------------------------------------
-        # 5. SAVE FULL PLY
-        # -------------------------------------------------
-
-        full_path = folder / "full.ply"
-
-        write_ply(
-            result["points"][0][valid_gpu]
-            .float()
-            .cpu(),
-
-            imgs.permute(
-                0, 2, 3, 1
-            )[valid_gpu]
-            .float()
-            .cpu(),
-
-            str(full_path),
-        )
-
-        cloud = PlyData.read(
-            str(full_path)
-        )
-
-        vertex = cloud["vertex"].data
-
-        total = len(vertex)
-
-        if total == 0:
-            raise ValueError(
-                "Reconstruction produced an empty point cloud"
-            )
-
-        # -------------------------------------------------
-        # 6. SAVE LIGHTWEIGHT PLY PREVIEW
-        # -------------------------------------------------
-
-        preview_limit = 75000
-
-        if total > preview_limit:
-
-            indices = (
-                np.random.default_rng(2026)
-                .choice(
-                    total,
-                    preview_limit,
-                    replace=False,
-                )
-            )
-
-            sampled = vertex[
-                np.sort(indices)
-            ]
-
-        else:
-            sampled = vertex
-
-        PlyData([
-            PlyElement.describe(
-                sampled,
-                "vertex",
-            )
-        ], text=False).write(
-            str(folder / "preview.ply")
-        )
-
-        # -------------------------------------------------
-        # 7. PRESERVE PI3X SPATIAL DATA
-        # -------------------------------------------------
-
-        # These arrays preserve the pixel-to-3D mapping.
-        # SAM masks will use this correspondence.
-
-        points = (
-            result["points"][0]
-            .float()
-            .cpu()
-            .numpy()
-        )
-
-        valid_mask = (
-            valid_gpu
-            .cpu()
-            .numpy()
-            .astype(bool)
-        )
-
-        camera_poses = (
-            result["camera_poses"][0]
-            .float()
-            .cpu()
-            .numpy()
-        )
-
-        images = (
-            imgs.detach()
-            .permute(0, 2, 3, 1)
-            .mul(255)
-            .round()
-            .clamp(0, 255)
-            .to(torch.uint8)
-            .cpu()
-            .numpy()
-        )
-
-        n, h, w = valid_mask.shape
-
-        if (
-            points.shape != (n, h, w, 3)
-            or images.shape != (n, h, w, 3)
-        ):
-            raise ValueError(
-                "Pi3X images and point maps are not aligned"
-            )
-
-        if camera_poses.shape != (n, 4, 4):
-            raise ValueError(
-                "Unexpected Pi3X camera pose shape"
-            )
-
-        # -------------------------------------------------
-        # 8. SAVE ALIGNED RGB FRAMES
-        # -------------------------------------------------
-
-        # IMPORTANT:
-        # These frames have exactly the same pixel dimensions
-        # as the Pi3X point maps.
-        #
-        # The frontend displays these images with SAM boxes.
-        # spatial.py uses the corresponding RGB arrays
-        # from spatial.npz for mask-to-3D grounding.
-
-        aligned_dir = folder / "aligned_frames"
-
-        aligned_dir.mkdir(
-            exist_ok=True
-        )
-
-        for index, rgb in enumerate(images):
-
-            Image.fromarray(rgb).save(
-                aligned_dir / f"{index:03d}.jpg",
-                format="JPEG",
-                quality=90,
-            )
-
-        # -------------------------------------------------
-        # 9. SAVE SPATIAL.NPZ
-        # -------------------------------------------------
-
-        tmp = folder / "spatial.partial.npz"
-
-        np.savez_compressed(
-            tmp,
-            points=points,
-            valid_mask=valid_mask,
-            camera_poses=camera_poses,
-            images=images,
-        )
-
-        tmp.replace(
-            folder / "spatial.npz"
-        )
-
-        # -------------------------------------------------
-        # 10. MARK RECONSTRUCTION COMPLETE
-        # -------------------------------------------------
-
-        update_manifest(
-            folder,
-            "completed",
-            "Reconstruction complete; ready for SAM 3.1.",
-            total_points=total,
-            preview_points=len(sampled),
-            spatial_ready=True,
-            spatial_frames=n,
-            spatial_height=h,
-            spatial_width=w,
-            finished_at=datetime.now(
-                timezone.utc
-            ).isoformat(),
-        )
-
-        weights.commit()
-
-        return {
-            "job_id": job_id,
-            "total_points": total,
-            "spatial_frames": n,
-        }
-
+        with tempfile.TemporaryDirectory(prefix=f"colmap-{job_id[:8]}-") as scratch:
+            result = reconstruct_colmap(folder, Path(scratch),
+                lambda status, message: update_manifest(folder, status, message))
+        warnings = []
+        if result["registered_frames"] < result["input_frames"]:
+            warnings.append(f'COLMAP registered {result["registered_frames"]} of {result["input_frames"]} frames in the largest connected model.')
+        if result["unusable_depth_frame_names"]:
+            warnings.append(f'{len(result["unusable_depth_frame_names"])} registered frames lacked usable MVS depth.')
+        update_manifest(folder, "completed", "COLMAP SfM/MVS complete; ready for SAM 3.1.",
+            **result, reconstruction_warnings=warnings, learned_reconstruction=False,
+            finished_at=datetime.now(timezone.utc).isoformat())
+        return {"job_id": job_id, **result}
     except Exception as exc:
-
-        update_manifest(
-            folder,
-            "failed",
-            "Reconstruction failed.",
-            error=(
-                f"{type(exc).__name__}: "
-                f"{str(exc)[:350]}"
-            ),
-        )
-
-        print(
-            traceback.format_exc()
-        )
-
+        update_manifest(folder, "failed", "COLMAP reconstruction failed.", spatial_ready=False,
+            error=f"{type(exc).__name__}: {str(exc)[:350]}")
+        print(traceback.format_exc(), flush=True)
         raise
 
 
@@ -561,7 +267,7 @@ def analyze_scene(
         or not spatial_path.is_file()
     ):
         raise FileNotFoundError(
-            "Job does not have saved Pi3X spatial data"
+            "Job does not have saved COLMAP spatial data"
         )
 
     manifest = json.loads(
@@ -617,7 +323,7 @@ def analyze_scene(
     # SAM 3.1:
     #   identifies floor and object pixels.
     #
-    # Pi3X:
+    # COLMAP:
     #   converts those pixels to reconstructed 3D points.
     #
     # RANSAC:
@@ -819,7 +525,7 @@ def web():
     return create_api(
         volume=data,
 
-        # Existing Pi3X reconstruction worker
+        # Existing COLMAP reconstruction worker
         enqueue=reconstruct.spawn.aio,
 
         # NEW: SAM 3.1 + RANSAC worker

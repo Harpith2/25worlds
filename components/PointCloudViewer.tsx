@@ -42,7 +42,7 @@ function isXYZ(value: number[] | undefined): value is [number, number, number] {
 }
 
 // Pick the normal that points into the reconstructed room, not toward an
-// arbitrary Pi3X coordinate axis. Floor points themselves do not vote.
+// arbitrary COLMAP coordinate axis. Floor points themselves do not vote.
 function roomFacingFloor(
   plane: NonNullable<SpatialResult["floor"]>,
   geometry: THREE.BufferGeometry,

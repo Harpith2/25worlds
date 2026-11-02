@@ -7,6 +7,10 @@ export interface ReconstructionJob {
   status: JobStatus;
   message?: string;
   error?: string;
+  reconstruction_engine?: string;
+  registered_frames?: number;
+  input_frames?: number;
+  reconstruction_warnings?: string[];
   spatial_ready?: boolean;
   spatial_frames?: number;
   frame_count?: number;
