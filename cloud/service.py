@@ -185,6 +185,7 @@ def create_api(
     enqueue_analysis: Callable[
         [str, str, int], Awaitable[object]
     ] | None = None,
+    enqueue_fusion: Callable[[str, str, list[int]], Awaitable[object]] | None = None,
 ) -> FastAPI:
 
     api = FastAPI(
@@ -538,6 +539,18 @@ def create_api(
         frame: int,
     ) -> dict:
 
+        def pending_response() -> dict:
+            response = {"status": "queued"}
+            if result_file.name.startswith("fusion-"):
+                progress_file = result_file.with_suffix(".progress.json")
+                try:
+                    progress = json.loads(progress_file.read_text(encoding="utf-8"))
+                    if isinstance(progress, dict):
+                        response["progress"] = progress
+                except (OSError, ValueError):
+                    pass
+            return response
+
         if result_file.is_file():
             return completed_response(
                 folder,
@@ -585,7 +598,7 @@ def create_api(
                 await call.get.aio(timeout=0)
 
             except TimeoutError:
-                return {"status": "queued"}
+                return pending_response()
 
             except Exception:
                 logger.exception(
@@ -661,7 +674,7 @@ def create_api(
 
             return failure
 
-        return {"status": "queued"}
+        return pending_response()
 
     # --------------------------------------------------
     # START SAM ANALYSIS
@@ -850,6 +863,78 @@ def create_api(
             marker,
             frame_index,
         )
+
+    def fusion_request(manifest: dict, concept: str, frames: object) -> list[int]:
+        available = int(manifest.get("spatial_frames") or 0)
+        if not isinstance(frames, list) or not 2 <= len(frames) <= available:
+            raise HTTPException(400, f"Choose 2 to {available} distinct reconstructed frames.")
+        for frame in frames:
+            validate_analysis(manifest, concept, frame)
+        if len(set(frames)) != len(frames):
+            raise HTTPException(400, "Fusion frame indices must be distinct.")
+        return sorted(frames)
+
+    def fusion_paths(folder: Path, concept: str, frames: list[int]):
+        digest = hashlib.sha256(json.dumps(
+            {"concept": concept, "frame_indices": frames}, sort_keys=True,
+        ).encode()).hexdigest()[:12]
+        target = folder / "analysis" / f"fusion-{digest}.json"
+        return target, target.with_suffix(".request.json")
+
+    @api.post("/api/jobs/{job_id}/fusion", dependencies=[Depends(require_access)])
+    async def start_fusion(job_id: str, request: Request):
+        if enqueue_fusion is None:
+            raise HTTPException(503, "Multi-frame fusion is not configured. Redeploy Modal.")
+        try:
+            payload = await request.json()
+        except ValueError as exc:
+            raise HTTPException(400, "Expected JSON data.") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("concept"), str):
+            raise HTTPException(400, "Enter an object concept.")
+        folder, manifest = await load_manifest(job_id)
+        frames = fusion_request(manifest, payload["concept"], payload.get("frame_indices"))
+        concept = validate_analysis(manifest, payload["concept"], frames[0])
+        target, marker = fusion_paths(folder, concept, frames)
+        lock = analysis_locks.setdefault(f"fusion:{job_id}:{target.name}", asyncio.Lock())
+        async with lock:
+            await refresh()
+            if target.is_file():
+                return completed_response(folder, target, frames[0])
+            old = load_analysis_marker(marker)
+            if old and old.get("status") == "queued":
+                status = await analysis_state(folder, target, marker, frames[0])
+                if status["status"] != "failed":
+                    return status
+            target.with_suffix(".progress.json").unlink(missing_ok=True)
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            state = {"status": "queued", "created_at": utc_now(),
+                     "concept": concept, "frame_indices": frames}
+            save_json(marker, state)
+            await volume.commit.aio()
+            try:
+                call = await enqueue_fusion(job_id, concept, frames)
+                if getattr(call, "object_id", None):
+                    state["call_id"] = call.object_id
+                    save_json(marker, state)
+                    await volume.commit.aio()
+            except Exception as exc:
+                logger.exception("Could not start fusion worker for %s", job_id)
+                save_json(marker, {**state, "status": "failed", "error": "Could not start fusion. Retry."})
+                await volume.commit.aio()
+                raise HTTPException(503, "Could not start fusion. Retry.") from exc
+            return {"status": "queued"}
+
+    @api.get("/api/jobs/{job_id}/fusion", dependencies=[Depends(require_access)])
+    async def get_fusion(job_id: str, concept: str, frame_indices: str):
+        folder, manifest = await load_manifest(job_id)
+        try:
+            frames = [int(value) for value in frame_indices.split(",")]
+        except ValueError as exc:
+            raise HTTPException(400, "Invalid fusion frame indices.") from exc
+        frames = fusion_request(manifest, concept, frames)
+        concept = validate_analysis(manifest, concept, frames[0])
+        target, marker = fusion_paths(folder, concept, frames)
+        return await analysis_state(folder, target, marker, frames[0])
 
     @api.delete(
         "/api/jobs/{job_id}",

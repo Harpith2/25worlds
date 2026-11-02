@@ -70,3 +70,32 @@ export const statuses: Record<UIMode, { title: string; description: string; step
   completed: { title: "Your world is ready", description: "Orbit, zoom, inspect, and download the reconstruction.", step: 2 },
   failed: { title: "Reconstruction stopped", description: "Review the error and try another walkthrough.", step: 0 },
 };
+
+export interface FusedSpatialObject extends SpatialObject {
+  observation_count: number;
+  frame_indices: number[];
+  unique_sample_points: number;
+  association_overlap: number | null;
+  observations: { frame_index: number; object_id: string | number; grounded_points: number; sample_points: number }[];
+}
+
+export interface SpatialFusionResult extends SpatialResult {
+  frame_indices: number[];
+  objects: FusedSpatialObject[];
+  association_tolerance: number;
+  voxel_size: number;
+}
+
+export interface SpatialFusionProgress {
+  completed_frames: number;
+  total_frames: number;
+  stage: "preparing" | "analyzing" | "associating" | "completed";
+  current_frame?: number | null;
+}
+
+export type SpatialFusionResponse = {
+  status: "queued" | "failed" | "completed";
+  error?: string;
+  result?: SpatialFusionResult;
+  progress?: SpatialFusionProgress;
+};

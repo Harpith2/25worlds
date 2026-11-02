@@ -613,7 +613,8 @@ async def analyze_frame(
         up_hint=up_hint,
     )
 
-    detected = await segment_image(
+    # A floor-only alignment request needs just one SAM call.
+    detected = floor_instances if object_concept.strip().casefold() == "floor" else await segment_image(
         image_rgb,
         object_concept,
         api_key=api_key,
@@ -665,4 +666,136 @@ async def analyze_frame(
         "object_sam_instances": len(detected),
         "navigation_ready": False,
         "warnings": warnings,
+    }
+
+
+def fuse_observations(
+    results: Sequence[dict[str, Any]],
+    *,
+    scene_scale: float,
+) -> dict[str, Any]:
+    """Conservatively associate static objects already in shared Pi3X space.
+
+    Only observed SAM surface samples are merged. This is not shape completion
+    or motion tracking; ambiguous or disjoint surfaces remain separate tracks.
+    """
+    if not math.isfinite(scene_scale) or scene_scale <= 0:
+        raise ValueError("scene_scale must be positive")
+    tolerance = scene_scale * 0.012
+    voxel_size = scene_scale * 0.001
+    tracks: list[dict[str, Any]] = []
+    ambiguous = 0
+
+    def clean_points(obj):
+        pts = np.asarray(obj.get("sample_xyz", []), dtype=np.float64)
+        if pts.size == 0:
+            return np.empty((0, 3))
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            raise ValueError("Object samples must be [N,3]")
+        return pts[np.isfinite(pts).all(axis=1)]
+
+    def coverage(a, b):
+        # Bound pairwise memory and work while keeping association deterministic.
+        a = a[np.linspace(0, len(a)-1, min(len(a), 768), dtype=int)]
+        b = b[np.linspace(0, len(b)-1, min(len(b), 768), dtype=int)]
+        near_a = np.zeros(len(a), dtype=bool)
+        near_b = np.zeros(len(b), dtype=bool)
+        for start in range(0, len(a), 128):
+            distances = np.sum((a[start:start+128, None] - b[None]) ** 2, axis=-1)
+            near_a[start:start+128] = distances.min(axis=1) <= tolerance ** 2
+            near_b |= distances.min(axis=0) <= tolerance ** 2
+        return float(near_a.mean()), float(near_b.mean())
+
+    for result in sorted(results, key=lambda r: r["frame_index"]):
+        frame = int(result["frame_index"])
+        for obj in result.get("objects", []):
+            points = clean_points(obj)
+            if len(points) < 12:
+                continue
+            label = str(obj["label"]).strip().casefold()
+            center = np.median(points, axis=0)
+            extent = np.linalg.norm(np.ptp(points, axis=0))
+            candidates = []
+            for track_index, track in enumerate(tracks):
+                if track["label"] != label or frame in track["frames"]:
+                    continue
+                previous = track["points"]
+                old_center = np.median(previous, axis=0)
+                old_extent = np.linalg.norm(np.ptp(previous, axis=0))
+                if np.linalg.norm(center - old_center) > max(max(extent, old_extent) * .65, tolerance * 2):
+                    continue
+                gap = np.maximum(np.maximum(points.min(0) - previous.max(0), previous.min(0) - points.max(0)), 0)
+                if np.linalg.norm(gap) > tolerance * 2:
+                    continue
+                a, b = coverage(points, previous)
+                if min(a, b) < .08 or (a + b) / 2 < .2:
+                    continue
+                candidates.append(((a+b)/2, track_index))
+            candidates.sort(reverse=True)
+            if len(candidates) > 1 and candidates[0][0] - candidates[1][0] < .12:
+                # Keep a distinct hypothesis rather than assigning an uncertain ID.
+                ambiguous += 1
+                candidates = []
+            observation = {
+                "frame_index": frame,
+                "object_id": obj["object_id"],
+                "grounded_points": int(obj.get("grounded_points", len(points))),
+                "sample_points": len(points),
+            }
+            if candidates:
+                score, index = candidates[0]
+                track = tracks[index]
+                track["points"] = np.concatenate([track["points"], points])
+                track["frames"].add(frame)
+                track["observations"].append(observation)
+                track["scores"].append(score)
+            else:
+                tracks.append({"label": label, "points": points, "frames": {frame},
+                               "observations": [observation], "scores": []})
+
+    objects = []
+    for index, track in enumerate(tracks):
+        pts = track["points"]
+        # Deduplicate samples at a scene-relative resolution, without metric claims.
+        _, keep = np.unique(np.floor(pts / voxel_size).astype(np.int64), axis=0, return_index=True)
+        unique = pts[np.sort(keep)]
+        objects.append({
+            "object_id": f"fused-{index + 1:03d}",
+            "label": track["label"],
+            "sam_confidence": None,
+            "bounds_xyxy": [0, 0, 0, 0],
+            "mask_pixels": 0,
+            "grounded_points": len(unique),
+            "center_xyz": np.round(np.median(unique, axis=0), 5).tolist(),
+            "bbox_min_xyz": np.round(unique.min(0), 5).tolist(),
+            "bbox_max_xyz": np.round(unique.max(0), 5).tolist(),
+            "sample_xyz": sample_points(unique, 5000),
+            "observation_count": len(track["observations"]),
+            "frame_indices": sorted(track["frames"]),
+            "observations": track["observations"],
+            "unique_sample_points": len(unique),
+            "association_overlap": min(track["scores"]) if track["scores"] else None,
+        })
+    floors = [np.asarray(r["floor"]["sample_xyz"], dtype=np.float64)
+              for r in results if r.get("floor") and r["floor"].get("sample_xyz")]
+    floor = fit_plane_ransac(np.concatenate(floors), iterations=500) if floors else None
+    first = min(results, key=lambda r: r["frame_index"]) if results else {}
+    warnings = ["Fused geometry contains observed surface samples only; hidden surfaces are not reconstructed."]
+    if ambiguous:
+        warnings.append(f"{ambiguous} ambiguous association(s) were kept separate to avoid merging nearby objects.")
+    if not objects:
+        warnings.append("No grounded objects were found in the sampled frames. Try another prompt or frame range.")
+    return {
+        "source": "SAM 3.1 + Pi3X multi-frame geometric fusion",
+        "frame_index": first.get("frame_index", 0),
+        "frame_indices": sorted(r["frame_index"] for r in results),
+        "image_width": first.get("image_width", 1),
+        "image_height": first.get("image_height", 1),
+        "object_concept": first.get("object_concept", ""),
+        "objects": objects,
+        "floor": floor,
+        "warnings": warnings,
+        "association_tolerance": tolerance,
+        "voxel_size": voxel_size,
+        "navigation_ready": False,
     }

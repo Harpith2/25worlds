@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpRight, CircleHelp, CloudUpload, Download, FileVideo2, LoaderCircle, LockKeyhole, Maximize2, MousePointer2, RotateCcw, X } from "lucide-react";
 import { PointCloudViewer, type PointCloudControls } from "@/components/PointCloudViewer";
-import { type ReconstructionJob, type UIMode, statuses } from "@/lib/types";
+import { type ReconstructionJob, type UIMode, type SpatialResult, type SpatialResponse, statuses } from "@/lib/types";
 import { SpatialAnalysis } from "@/components/SpatialAnalysis";
 
 const MAX_SIZE = 60 * 1024 * 1024;
@@ -38,6 +38,12 @@ export function Studio() {
   const [mode, setMode] = useState<UIMode>("ready");
   const [error, setError] = useState("");
   const [ply, setPly] = useState<ArrayBuffer | null>(null);
+  const [floorOverlay, setFloorOverlay] = useState<SpatialResult | null>(null);
+  const [alignToFloor, setAlignToFloor] = useState(true);
+  const [floorMessage, setFloorMessage] = useState("");
+  const receiveSpatialResult = useCallback((result: SpatialResult) => {
+    if (result.floor) { setFloorOverlay({ ...result, objects: [] }); setFloorMessage(""); }
+  }, []);
   const [pointSize, setPointSize] = useState(.022);
   const [dragged, setDragged] = useState(false);
   const [selectedDuration, setSelectedDuration] = useState<number | null>(null);
@@ -98,6 +104,57 @@ export function Studio() {
     void poll();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [jobId, activeCode]);
+
+  useEffect(() => {
+    setFloorOverlay(null); setAlignToFloor(true); setFloorMessage("");
+  }, [job?.id]);
+
+  useEffect(() => {
+    if (!job?.id || !job.spatial_ready || !ply || mode !== "completed" || !activeCode) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const id = job.id;
+    const frame = Math.floor(Math.max(0, (job.spatial_frames || 1) - 1) / 2);
+    const deadline = Date.now() + 7 * 60 * 1000;
+    setFloorMessage("Estimating floor…");
+    const accept = (payload: SpatialResponse) => {
+      if (payload.status === "failed") throw new Error(payload.error || "Floor estimation failed.");
+      if (payload.status === "completed") {
+        if (payload.result?.floor) receiveSpatialResult(payload.result);
+        else setFloorMessage("No floor in this frame. Analyze another frame below to align the scene.");
+        return true;
+      }
+      return false;
+    };
+    const poll = async () => {
+      try {
+        if (Date.now() > deadline) throw new Error("Floor estimation timed out. Try an analysis below.");
+        const response = await fetch(`/api/jobs/${id}/analysis?concept=floor&frame_index=${frame}`, {
+          headers: apiHeaders(activeCode), cache: "no-store",
+        });
+        if (!response.ok) throw new Error(await decodeError(response));
+        const payload = await response.json() as SpatialResponse;
+        if (!cancelled && !accept(payload)) timer = setTimeout(poll, 2500);
+      } catch (cause) {
+        if (!cancelled) setFloorMessage(cause instanceof Error ? cause.message : "Could not estimate floor.");
+      }
+    };
+    const start = async () => {
+      try {
+        const response = await fetch(`/api/jobs/${id}/analysis`, {
+          method: "POST", headers: { ...apiHeaders(activeCode), "content-type": "application/json" },
+          body: JSON.stringify({ concept: "floor", frame_index: frame }),
+        });
+        if (!response.ok) throw new Error(await decodeError(response));
+        const payload = await response.json() as SpatialResponse;
+        if (!cancelled && !accept(payload)) timer = setTimeout(poll, 1500);
+      } catch (cause) {
+        if (!cancelled) setFloorMessage(cause instanceof Error ? cause.message : "Could not estimate floor.");
+      }
+    };
+    void start();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [job?.id, job?.spatial_ready, job?.spatial_frames, ply, mode, activeCode, receiveSpatialResult]);
 
   async function submit() {
     if (!file || inProgress) return;
@@ -188,15 +245,16 @@ export function Studio() {
           <div className="viewer-card">
             <div className="viewer-head"><h3 className="area-label">Viewer</h3>{(mode === "completed" || inProgress) && <span className="viewer-state">{mode === "completed" ? "3D scene" : "PROCESSING"}</span>}</div>
             <div className="viewer-stage">
-              {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><p>3D Reconstruction</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
+              {ply && mode === "completed" ? <PointCloudViewer ref={viewerRef} data={ply} pointSize={pointSize} overlay={floorOverlay} alignToFloor={alignToFloor} showFloor={false}/> : inProgress ? <div className="viewer-loader"><div className="loader-rings"><span/><span/><span/></div><h3>{stage.title}</h3><p>{job?.message || stage.description}</p><span className="viewer-caption">This is real GPU processing, not a simulated progress bar.</span></div> : <div className="viewer-empty"><EmptyViewerArt/><p>3D Reconstruction</p><div className="viewer-corner-note">DRAG TO ROTATE WHEN READY ↗</div></div>}
             </div>
-            <div className="viewer-toolbar">
+            <div className="viewer-toolbar" style={{ height: "auto", minHeight: 58, flexWrap: "wrap", paddingBlock: 12 }}>
               <div className="viewer-toolbar-text"><MousePointer2 size={15}/><span>{mode === "completed" ? `${(job?.preview_points || 0).toLocaleString()} points in preview` : "Your 3D canvas"}</span></div>
-              <div className="viewer-actions">
-                {mode === "completed" && <><label className="point-size-control">Point size <input type="range" min="0.008" max="0.055" step="0.002" value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))}/></label><button className="toolbar-button" onClick={() => viewerRef.current?.reset()} type="button" title="Reset camera position and orientation"><RotateCcw size={15}/><span>Reset</span></button></>}
+              <div className="viewer-actions" style={{ flexWrap: "wrap" }}>
+                {mode === "completed" && <><label className="spatial-floor-toggle"><input type="checkbox" checked={alignToFloor} onChange={e => setAlignToFloor(e.target.checked)} />Align to estimated floor</label><label className="point-size-control">Point size <input type="range" min="0.008" max="0.055" step="0.002" value={pointSize} onChange={(e) => setPointSize(Number(e.target.value))}/></label><button className="toolbar-button" onClick={() => viewerRef.current?.reset()} type="button" title="Reset camera position and orientation"><RotateCcw size={15}/><span>Reset</span></button></>}
                 <span className="toolbar-tip"><Maximize2 size={14}/> {mode === "completed" ? "Drag · Zoom" : "Interactive 3D"}</span>
               </div>
             </div>
+            {mode === "completed" && floorMessage && <p role="status" style={{ margin: 0, padding: "12px 20px", fontSize: 11, lineHeight: 1.6 }}>{floorMessage}</p>}
             {mode === "completed" && job && <div className="result-strip"><div><strong>{(job.total_points || 0).toLocaleString()} points in your world</strong><span>{job.frame_count ?? "Multiple"} frames · Browser preview optimized for performance</span></div><div className="result-buttons"><button type="button" className="result-primary" onClick={download} disabled={downloading}>Full PLY <Download size={16}/></button></div></div>}
           </div>
         </div>
@@ -216,6 +274,8 @@ export function Studio() {
   job={job}
   ply={ply}
   accessCode={activeCode}
+  onResult={receiveSpatialResult}
+  floorEstimate={floorOverlay}
 />
     </main>
     <footer className="footer" aria-hidden="true"><div className="site-width footer-content" /></footer>
